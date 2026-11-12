@@ -1,0 +1,22 @@
+{
+  "id": "com.ayodiacompany.feature-board",
+  "name": "Feature Board",
+  "version": "0.1.0",
+  "description": "One board for the Features in .features/: what each one is waiting on",
+  "author": "Ayodia",
+  "main": "dist/index.js",
+  "styles": "dist/index.css",
+  "apiVersion": "1.0.0",
+  "defaultEnabled": true,
+  "contributions": {
+    "panels": [
+      {
+        "id": "board",
+        "title": "Features",
+        "icon": "view_kanban",
+        "placement": "fullscreen",
+        "tooltip": "Open the Feature board: every Feature in .features/ and what it is waiting on."
+      }
+    ]
+  }
+}
