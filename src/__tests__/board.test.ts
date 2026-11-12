@@ -18,7 +18,7 @@ import {
   sortRows,
   touchesFeatures,
   trailing,
-  usageLine,
+  usageCells,
   type JiraEpic,
   type SortKey,
 } from '../board';
@@ -533,7 +533,7 @@ describe('localDate', () => {
   });
 });
 
-describe('usageLine', () => {
+describe('usageCells', () => {
   const linked = (...sessions: string[][]): TaskFact[] =>
     sessions.map((linkedSessions, i) => ({ ...task('to-do'), id: `t${i}`, linkedSessions }));
   const usage = (rows: Record<string, Partial<SessionUsage>>) =>
@@ -545,32 +545,28 @@ describe('usageLine', () => {
       b: { tokens: 50, costUSD: 0.5 },
       c: { tokens: 999, costUSD: 99 },
     });
-    expect(usageLine(linked(['a'], ['b', 'a']), all)).toBe('2 sessions · 150 tokens · $1.75');
-    expect(usageLine(linked(['a']), all)).toBe('1 session · 100 tokens · $1.25');
-    expect(usageLine(linked(['a']), usage({ a: { tokens: 4_120_000, costUSD: 12.4 } }))).toBe('1 session · 4.1M tokens · $12.40');
+    expect(usageCells(linked(['a'], ['b', 'a']), all)).toEqual(['2', '150', '$1.75', '']);
+    expect(usageCells(linked(['a']), all)).toEqual(['1', '100', '$1.25', '']);
+    expect(usageCells(linked(['a']), usage({ a: { tokens: 4_120_000, costUSD: 12.4 } }))).toEqual(['1', '4.1M', '$12.40', '']);
   });
 
   it('is empty when no Task links a session', () => {
-    expect(usageLine(linked([], []), usage({ a: { tokens: 100, costUSD: 1 } }))).toBe('');
-    expect(usageLine([task('done')], usage({}))).toBe('');
-    expect(usageLine([], null)).toBe('');
+    expect(usageCells(linked([], []), usage({ a: { tokens: 100, costUSD: 1 } }))).toBeNull();
+    expect(usageCells([task('done')], usage({}))).toBeNull();
+    expect(usageCells([], null)).toBeNull();
   });
 
   it('marks a cost the host estimated, and never prints one the host could not price', () => {
-    expect(usageLine(linked(['a', 'b']), usage({ a: { tokens: 10, costUSD: 1 }, b: { tokens: 10, costUSD: 2, costEstimated: true } }))).toBe(
-      '2 sessions · 20 tokens · ~$3.00',
-    );
+    expect(usageCells(linked(['a', 'b']), usage({ a: { tokens: 10, costUSD: 1 }, b: { tokens: 10, costUSD: 2, costEstimated: true } }))).toEqual(['2', '20', '~$3.00', '']);
     // Tokens and no cost: the host had no price for the model. That is not $0.
-    expect(usageLine(linked(['a', 'b']), usage({ a: { tokens: 10, costUSD: 1 }, b: { tokens: 30 } }))).toBe(
-      '2 sessions · 40 tokens · $1.00 · 1 not priced',
-    );
-    expect(usageLine(linked(['b']), usage({ b: { tokens: 30 } }))).toBe('1 session · 30 tokens · 1 not priced');
+    expect(usageCells(linked(['a', 'b']), usage({ a: { tokens: 10, costUSD: 1 }, b: { tokens: 30 } }))).toEqual(['2', '40', '$1.00 + 1 not priced', '']);
+    expect(usageCells(linked(['b']), usage({ b: { tokens: 30 } }))).toEqual(['1', '30', '1 not priced', '']);
     // A linked session the host has no usage for adds nothing.
-    expect(usageLine(linked(['a', 'gone']), usage({ a: { tokens: 10, costUSD: 1 } }))).toBe('2 sessions · 10 tokens · $1.00');
+    expect(usageCells(linked(['a', 'gone']), usage({ a: { tokens: 10, costUSD: 1 } }))).toEqual(['2', '10', '$1.00', '']);
   });
 
   it('says so when the usage could not be read', () => {
-    expect(usageLine(linked(['a', 'b']), null)).toBe('2 sessions · tokens and cost not read');
+    expect(usageCells(linked(['a', 'b']), null)).toEqual(['2', 'not read', '', '']);
   });
 
   it('adds the time the sessions worked, for one Task as for a whole Feature', () => {
@@ -579,20 +575,18 @@ describe('usageLine', () => {
       b: { tokens: 50, costUSD: 0.5, workMs: 45 * 60_000 },
     });
     const [first, second] = linked(['a'], ['b', 'a']);
-    expect(usageLine([first], all)).toBe('1 session · 100 tokens · $1.25 · 23 min');
-    expect(usageLine([second], all)).toBe('2 sessions · 150 tokens · $1.75 · 1 h 8 min');
-    expect(usageLine([first, second], all)).toBe('2 sessions · 150 tokens · $1.75 · 1 h 8 min');
+    expect(usageCells([first], all)).toEqual(['1', '100', '$1.25', '23 min']);
+    expect(usageCells([second], all)).toEqual(['2', '150', '$1.75', '1 h 8 min']);
+    expect(usageCells([first, second], all)).toEqual(['2', '150', '$1.75', '1 h 8 min']);
   });
 
   it('leaves the time out when it is not known for every session that ran, so it never reads too low', () => {
     const partial = usage({ a: { tokens: 100, costUSD: 1, workMs: 60_000 }, b: { tokens: 50, costUSD: 1 } });
-    expect(usageLine(linked(['a', 'b']), partial)).toBe('2 sessions · 150 tokens · $2.00');
+    expect(usageCells(linked(['a', 'b']), partial)).toEqual(['2', '150', '$2.00', '']);
     // A session that never used a token has no time to miss.
-    expect(usageLine(linked(['a', 'idle']), usage({ a: { tokens: 100, costUSD: 1, workMs: 60_000 }, idle: {} }))).toBe(
-      '2 sessions · 100 tokens · $1.00 · 1 min',
-    );
+    expect(usageCells(linked(['a', 'idle']), usage({ a: { tokens: 100, costUSD: 1, workMs: 60_000 }, idle: {} }))).toEqual(['2', '100', '$1.00', '1 min']);
     // No finished turn yet: nothing to print.
-    expect(usageLine(linked(['a']), usage({ a: { tokens: 100, costUSD: 1, workMs: 0 } }))).toBe('1 session · 100 tokens · $1.00');
+    expect(usageCells(linked(['a']), usage({ a: { tokens: 100, costUSD: 1, workMs: 0 } }))).toEqual(['1', '100', '$1.00', '']);
   });
 });
 
@@ -856,7 +850,7 @@ describe('loadBoard', () => {
     });
     const { usage, tasks } = await loadBoard(['/ws']);
     expect(usage?.get('s9')).toEqual({ tokens: 100, costUSD: 1, costEstimated: false });
-    expect(usageLine(tasks.get('mr-1')!, usage)).toBe('1 session · 100 tokens · $1.00');
+    expect(usageCells(tasks.get('mr-1')!, usage)).toEqual(['1', '100', '$1.00', '']);
     expect(warn).toHaveBeenCalledTimes(1);
   });
 

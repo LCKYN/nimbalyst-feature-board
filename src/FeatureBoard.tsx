@@ -14,7 +14,7 @@ import {
   sortRows,
   touchesFeatures,
   trailing,
-  usageLine,
+  usageCells,
   type Board,
   type BoardRow,
   type Sort,
@@ -566,8 +566,10 @@ function RowDetail({ row, usage }: { row: BoardRow; usage: Board['usage'] }) {
   if (!feature && tasks.length === 0) return null;
 
   const taskCount = `Tasks ${progress.done}/${progress.total}`;
-  // "3 sessions · 4.1M tokens · $12.40 · 2 h 5 min", empty when no Task links a session.
-  const total = usageLine(tasks, usage);
+  // Sessions, tokens, cost and time over all the Tasks; null when no Task links a session.
+  const total = usageCells(tasks, usage);
+  const hasCommit = tasks.some((t) => t.commit);
+  const cell = 'py-0.5 pl-4 text-right whitespace-nowrap tabular-nums';
   const [summary, ...restOfGoal] = (feature?.goal ?? '').split('\n\n');
   const criteria = feature?.criteria ?? [];
   const ticked = feature && criteriaProgress(row);
@@ -585,7 +587,6 @@ function RowDetail({ row, usage }: { row: BoardRow; usage: Board['usage'] }) {
         </span>
       </summary>
       <div className="ml-3.5 whitespace-pre-wrap pb-1">
-        {total && <div className="feature-row-usage mt-1">{total}</div>}
         {restOfGoal.length > 0 && <div className="feature-row-goal mt-1">{restOfGoal.join('\n\n')}</div>}
         {feature && (
           <>
@@ -606,23 +607,60 @@ function RowDetail({ row, usage }: { row: BoardRow; usage: Board['usage'] }) {
           </>
         )}
         <div className={heading}>{tasks.length > 0 ? taskCount : 'Tasks · none'}</div>
-        {sortTasks(tasks).map((task) => {
-          // The same line as the Feature's, for this Task's sessions alone. A
-          // session two Tasks link counts under both, so these do not add up to the total.
-          const used = [usageLine([task], usage), task.commit && `commit ${task.commit}`].filter(Boolean).join(' · ');
-          return (
-            <div key={task.id} className="feature-row-task flex gap-2">
-              <span className="w-20 shrink-0">{task.status.replace(/-/g, ' ')}</span>
-              <span>
-                {task.title}
-                {task.tags.includes('blocked') && task.status !== 'done' && task.status !== 'wont-do' && (
-                  <span className="text-nim-error"> blocked</span>
-                )}
-                {used && <span className="feature-row-task-usage tabular-nums"> — {used}</span>}
-              </span>
-            </div>
-          );
-        })}
+        {tasks.length > 0 && (
+          <table className="feature-row-tasks mt-0.5 border-collapse whitespace-normal text-left">
+            {(total || hasCommit) && (
+              <thead>
+                <tr className="border-b border-nim">
+                  <th className="py-0.5 font-normal">Status</th>
+                  <th className="py-0.5 pl-4 font-normal">Task</th>
+                  {total && ['Sessions', 'Tokens', 'Cost', 'Time'].map((h) => (
+                    <th key={h} className={`${cell} font-normal`}>
+                      {h}
+                    </th>
+                  ))}
+                  {hasCommit && <th className="py-0.5 pl-4 font-normal">Commit</th>}
+                </tr>
+              </thead>
+            )}
+            <tbody>
+              {sortTasks(tasks).map((task) => (
+                <tr key={task.id} className="feature-row-task align-top">
+                  <td className="py-0.5 whitespace-nowrap">{task.status.replace(/-/g, ' ')}</td>
+                  <td className="py-0.5 pl-4 text-nim">
+                    {task.title}
+                    {task.tags.includes('blocked') && task.status !== 'done' && task.status !== 'wont-do' && (
+                      <span className="text-nim-error"> blocked</span>
+                    )}
+                  </td>
+                  {/* This Task's sessions alone; a Task that links none leaves its cells empty. */}
+                  {total && (usageCells([task], usage) ?? ['', '', '', '']).map((value, i) => (
+                    <td key={i} className={cell}>
+                      {value}
+                    </td>
+                  ))}
+                  {hasCommit && <td className="py-0.5 pl-4 font-mono whitespace-nowrap">{task.commit}</td>}
+                </tr>
+              ))}
+            </tbody>
+            {total && tasks.length > 1 && (
+              // Each session once: a session two Tasks link is in both rows above, so the rows can add up to more.
+              <tfoot>
+                <tr className="feature-row-usage border-t border-nim font-medium text-nim">
+                  <td className="py-0.5" colSpan={2}>
+                    Total
+                  </td>
+                  {total.map((value, i) => (
+                    <td key={i} className={cell}>
+                      {value}
+                    </td>
+                  ))}
+                  {hasCommit && <td />}
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        )}
       </div>
     </details>
   );

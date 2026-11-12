@@ -362,21 +362,21 @@ export function duration(ms: number): string {
 }
 
 /**
- * What a Feature's work used: "3 sessions · 4.1M tokens · $12.40 · 2 h 5 min",
- * summed over the sessions its Tasks link, each session once; pass one Task for
- * that Task's share. Empty when no Task links a session. The cost is the host's
- * own figure and nothing else: "~" when the host estimated part of it, and a
- * session with tokens but no cost is counted as "not priced", never as $0. The
- * time is how long the sessions' finished turns ran, not how long anyone waited.
+ * What a Feature's work used, as the cells of one table row: sessions, tokens,
+ * cost, time (`['3', '4.1M', '$12.40', '2 h 5 min']`), summed over the sessions
+ * its Tasks link, each session once; pass one Task for that Task's share. Null
+ * when no Task links a session. The cost is the host's own figure and nothing
+ * else: "~" when the host estimated part of it, and a session with tokens but
+ * no cost is counted as "not priced", never as $0. The time is how long the
+ * sessions' finished turns ran, not how long anyone waited; empty when unknown.
  *
  * ponytail: the sessions a Task links, not the child sessions they started.
  * Walk `sessions:list`'s `parentSessionId` if a workstream's cost is wanted.
  */
-export function usageLine(tasks: TaskFact[], usage: Map<string, SessionUsage> | null): string {
+export function usageCells(tasks: TaskFact[], usage: Map<string, SessionUsage> | null): string[] | null {
   const ids = [...new Set(tasks.flatMap((t) => t.linkedSessions ?? []))];
-  if (ids.length === 0) return '';
-  const count = `${ids.length} ${ids.length === 1 ? 'session' : 'sessions'}`;
-  if (!usage) return `${count} · tokens and cost not read`;
+  if (ids.length === 0) return null;
+  if (!usage) return [String(ids.length), 'not read', '', ''];
 
   const rows = ids.flatMap((id) => usage.get(id) ?? []);
   const priced = rows.filter((r) => r.costUSD > 0);
@@ -386,14 +386,16 @@ export function usageLine(tasks: TaskFact[], usage: Map<string, SessionUsage> | 
   const ran = rows.filter((r) => r.tokens > 0);
   const work = ran.every((r) => r.workMs !== undefined) ? ran.reduce((sum, r) => sum + (r.workMs ?? 0), 0) : 0;
   return [
-    count,
-    `${compact.format(rows.reduce((sum, r) => sum + r.tokens, 0))} tokens`,
-    priced.length > 0 && `${priced.some((r) => r.costEstimated) ? '~' : ''}$${cost.toFixed(2)}`,
-    work > 0 && duration(work),
-    unpriced > 0 && `${unpriced} not priced`,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+    String(ids.length),
+    compact.format(rows.reduce((sum, r) => sum + r.tokens, 0)),
+    [
+      priced.length > 0 && `${priced.some((r) => r.costEstimated) ? '~' : ''}$${cost.toFixed(2)}`,
+      unpriced > 0 && `${unpriced} not priced`,
+    ]
+      .filter(Boolean)
+      .join(' + '),
+    work > 0 ? duration(work) : '',
+  ];
 }
 
 /** The status as the board prints it: "unknown" when it was computed without a fact it needs. */
