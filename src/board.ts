@@ -210,12 +210,27 @@ export interface BoardRow {
   unknown?: 'Jira not read' | 'MR state not read';
 }
 
-const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id, undefined, { numeric: true });
+/** What needs the user comes first; closed rows come last. */
+const STATUS_ORDER: FeatureStatus[] = [
+  'awaiting_decision',
+  'in_progress',
+  'started',
+  'consulting',
+  'todo',
+  'done',
+  'cancelled',
+];
+
+/** By status in `STATUS_ORDER`, blocked rows first within a status, then by key (`RDHR-9` before `RDHR-10`). */
+const byNeed = (a: BoardRow, b: BoardRow) =>
+  STATUS_ORDER.indexOf(a.status) - STATUS_ORDER.indexOf(b.status) ||
+  Number(b.blocked) - Number(a.blocked) ||
+  a.id.localeCompare(b.id, undefined, { numeric: true });
 
 /**
  * One row per Feature file, plus one per cached Epic that has no file and one
  * per Task `featureId` that matches neither, each with its status from the
- * rules table.
+ * rules table, in the order of `byNeed`.
  *
  * ponytail: worktrees and MR state are not read yet, so a row is never
  * `started` (it reads `consulting` or `todo`) and an MR never makes one
@@ -310,7 +325,7 @@ export function boardRows(
   for (const id of tasks.keys()) {
     if (!placed.has(id)) rows.push(row(id, id));
   }
-  return rows.sort(byId);
+  return rows.sort(byNeed);
 }
 
 /**

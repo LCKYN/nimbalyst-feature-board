@@ -14,6 +14,8 @@ A [Nimbalyst](https://github.com/nimbalyst/nimbalyst) extension that adds a full
 
 ## Finding a Feature
 
+Rows are ordered by what needs you first: รอตัดสินใจ, then กำลังทำ (blocked ones first), เริ่มทำ, ปรึกษา, จะทำ, and the closed ones last; within a status by id.
+
 The filter box looks for every word you type in a row's title, id, kind, labels, Jira status and shown status, and it searches the closed rows too: `prod` lists what can be sold, `demo` what can be shown. A label on a row puts itself in the box.
 
 The ↗ beside an id opens the Epic in Jira. The site comes from the repo's `CLAUDE.md`, from the line `Jira project: KEY (https://<site>/...)`; a line without the URL gives no link.

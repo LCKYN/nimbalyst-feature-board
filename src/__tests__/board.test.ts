@@ -51,7 +51,7 @@ const cache = (...epics: JiraEpic[]) => ({ fetchedAt: '2026-11-12T08:00:00Z', ep
 const statusOf = (rows: ReturnType<typeof boardRows>) => Object.fromEntries(rows.map((r) => [r.id, r.status]));
 
 describe('boardRows', () => {
-  it('lists Feature files and Epics without a file, in key order, each Epic once', () => {
+  it('lists Feature files and Epics without a file, each Epic once, in key order within one status', () => {
     const rows = boardRows(
       [feature()],
       new Map(),
@@ -61,6 +61,39 @@ describe('boardRows', () => {
       ['RDHR-20', 'Payroll', false],
       ['RDHR-144', 'Recruit on LINE', true],
       ['RDHR-1000', 'Later', false],
+    ]);
+  });
+
+  it('puts what needs the user first: by status, blocked before the rest of a status, then by key', () => {
+    const blocked: TaskFact = { id: 'b', title: 'b', status: 'in-progress', tags: ['blocked'], updatedAt: 0 };
+    const asking: SessionFact = { id: 's', title: 's', taskId: 'b', status: 'idle', hasPendingPrompt: true, updatedAt: 0 };
+    const rows = boardRows(
+      [],
+      new Map([
+        ['A-7', [blocked]],
+        ['A-8', [blocked]],
+      ]),
+      cache(
+        epic({ key: 'A-1', status: 'Done' }),
+        epic({ key: 'A-2', status: 'To Do' }),
+        epic({ key: 'A-3', status: 'To Do', labels: ['rejected'] }),
+        epic({ key: 'A-10' }),
+        epic({ key: 'A-4' }),
+        epic({ key: 'A-7' }),
+        epic({ key: 'A-8' }),
+      ),
+      new Map([['A-8', [asking]]]),
+      { 'A-1': 'consulting' },
+    );
+    expect(rows.map((r) => `${r.id} ${r.status}${r.blocked ? ' blocked' : ''}`)).toEqual([
+      'A-8 awaiting_decision',
+      'A-7 in_progress blocked',
+      'A-4 in_progress',
+      'A-10 in_progress',
+      // A status set by hand sorts where it says.
+      'A-1 consulting',
+      'A-2 todo',
+      'A-3 cancelled',
     ]);
   });
 
@@ -159,17 +192,23 @@ describe('boardRows', () => {
   });
 
   it('lets a status set by hand win over the computed one, and marks it', () => {
-    const rows = (overrides?: Record<string, string>) =>
-      boardRows([feature(), feature({ id: 'ISF-99', epic: 'ISF-99' })], new Map(), cache(epic()), undefined, overrides);
-    expect(rows()[1]).toMatchObject({ id: 'RDHR-144', status: 'in_progress', handSet: false });
+    const row = (id: string, overrides?: Record<string, string>) =>
+      boardRows(
+        [feature(), feature({ id: 'ISF-99', epic: 'ISF-99' })],
+        new Map(),
+        cache(epic()),
+        undefined,
+        overrides,
+      ).find((r) => r.id === id);
+    expect(row('RDHR-144')).toMatchObject({ status: 'in_progress', handSet: false });
 
-    const [missing, reviewed] = rows({ 'RDHR-144': 'awaiting_decision', 'ISF-99': 'cancelled', 'GONE-1': 'done' });
-    expect(reviewed).toMatchObject({ status: 'awaiting_decision', handSet: true });
+    const set = { 'RDHR-144': 'awaiting_decision', 'ISF-99': 'cancelled', 'GONE-1': 'done' };
+    expect(row('RDHR-144', set)).toMatchObject({ status: 'awaiting_decision', handSet: true });
     // The user knows better than "unknown" too.
-    expect(missing).toMatchObject({ id: 'ISF-99', status: 'cancelled', handSet: true, unknown: undefined });
+    expect(row('ISF-99', set)).toMatchObject({ status: 'cancelled', handSet: true, unknown: undefined });
 
     // Storage is not trusted: a value that is no status is ignored.
-    expect(rows({ 'RDHR-144': 'finished' })[1]).toMatchObject({ status: 'in_progress', handSet: false });
+    expect(row('RDHR-144', { 'RDHR-144': 'finished' })).toMatchObject({ status: 'in_progress', handSet: false });
   });
 
   it('takes the target from the Feature file when it has one, else the due date of the Epic', () => {
@@ -223,7 +262,8 @@ describe('boardRows', () => {
 
   it('says unknown instead of computing without Jira when the Feature names an Epic the cache does not hold', () => {
     const named = feature({ id: 'ISF-99', epic: 'ISF-99' });
-    expect(boardRows([named], new Map(), cache(epic()))[0]).toMatchObject({ unknown: 'Jira not read', epic: undefined });
+    const withCache = boardRows([named], new Map(), cache(epic())).find((r) => r.id === 'ISF-99');
+    expect(withCache).toMatchObject({ unknown: 'Jira not read', epic: undefined });
     expect(boardRows([named], new Map(), null)[0].unknown).toBe('Jira not read');
     expect(boardRows([{ ...named, epic: '' }], new Map(), cache(epic()))[0].unknown).toBeUndefined();
     expect(boardRows([feature()], new Map(), cache(epic()))[0].unknown).toBeUndefined();
