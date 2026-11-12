@@ -36,6 +36,11 @@ export interface TaskFact {
   updatedAt: number;
   /** Ids of the AI sessions linked to the Task, as the tracker item lists them. */
   linkedSessions?: string[];
+  /**
+   * Short sha of the commit the host last linked to the Task: one a linked
+   * session made, or one whose message names the Task. Empty when there is none.
+   */
+  commit?: string;
 }
 
 /** An AI session attributed to the Feature. */

@@ -609,7 +609,7 @@ function RowDetail({ row, usage }: { row: BoardRow; usage: Board['usage'] }) {
         {sortTasks(tasks).map((task) => {
           // The same line as the Feature's, for this Task's sessions alone. A
           // session two Tasks link counts under both, so these do not add up to the total.
-          const used = usageLine([task], usage);
+          const used = [usageLine([task], usage), task.commit && `commit ${task.commit}`].filter(Boolean).join(' · ');
           return (
             <div key={task.id} className="feature-row-task flex gap-2">
               <span className="w-20 shrink-0">{task.status.replace(/-/g, ' ')}</span>

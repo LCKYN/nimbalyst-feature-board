@@ -202,6 +202,11 @@ export function groupTasks(items: any[], workspace?: string): Map<string, TaskFa
       linkedSessions: Array.isArray(item.linkedSessions)
         ? item.linkedSessions.filter((id: unknown) => typeof id === 'string')
         : [],
+      // ponytail: the last linked commit, which is the one on the integration
+      // branch only when the branch was merged as it is. After a squash merge
+      // it is the branch's commit; the merge's own sha takes the MR state the
+      // board does not read (see `boardRows`).
+      commit: typeof item.linkedCommitSha === 'string' ? item.linkedCommitSha.slice(0, 7) : '',
     };
     byFeature.set(featureId, [...(byFeature.get(featureId) ?? []), task]);
   }

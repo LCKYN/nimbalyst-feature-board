@@ -147,6 +147,18 @@ describe('Feature files', () => {
 });
 
 describe('groupTasks', () => {
+  it('keeps the commit the host last linked to a Task, shortened, and none when there is none', () => {
+    const item = (id: string, over: object = {}) => ({ id, type: 'feature-task', customFields: { featureId: 'mr-1' }, ...over });
+    const [linked, bare, odd] = groupTasks([
+      item('linked', { linkedCommitSha: '8bff22f9f003c7915a74f301baccbc4a77ce36ae' }),
+      item('bare'),
+      item('odd', { linkedCommitSha: 42 }),
+    ]).get('mr-1')!;
+    expect(linked.commit).toBe('8bff22f');
+    expect(bare.commit).toBe('');
+    expect(odd.commit).toBe('');
+  });
+
   it('keeps live feature-task items and groups them by the Feature they name', () => {
     const item = (id: string, over: object = {}) => ({
       id,
@@ -176,6 +188,7 @@ describe('groupTasks', () => {
         tags: ['blocked'],
         updatedAt: Date.parse('2026-11-12T06:11:53.450Z'),
         linkedSessions: ['s1', 's2'],
+        commit: '',
       },
     ]);
     expect(grouped.get('mr-1')?.[0].linkedSessions).toEqual([]);
