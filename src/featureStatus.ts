@@ -97,6 +97,9 @@ export interface WaitLists {
   stuck: WaitItem[];
 }
 
+/** An open Task is one whose status is not `done` or `wont-do`. */
+const isOpen = (t: TaskFact) => t.status !== 'done' && t.status !== 'wont-do';
+
 /**
  * What the Feature is waiting on, read from session, MR and Task state, so a
  * session that never reports it is waiting still shows up.
@@ -127,7 +130,7 @@ export function waitItems(facts: FeatureFacts): WaitLists {
     ],
     stuck: [
       ...facts.tasks
-        .filter((t) => t.tags.includes('blocked'))
+        .filter((t) => isOpen(t) && t.tags.includes('blocked'))
         .map((t): WaitItem => ({ featureId, kind: 'blocked', title: t.title, openedAt: t.updatedAt, taskId: t.id })),
       ...openMrs.filter((mr) => mr.ciFailed).map(ofMr('ci_failed')),
       ...facts.sessions.filter((s) => s.status === 'error').map(ofSession('session_error')),
@@ -142,6 +145,8 @@ export interface TaskProgress {
   inReview: number;
   inProgress: number;
   todo: number;
+  /** Tasks whose status is none of the five above. They count as open, and not as "to do". */
+  other: number;
 }
 
 /** How far a Feature's Tasks are. Only `done` counts as done: a Task in review is still open. */
@@ -151,7 +156,8 @@ export function taskProgress(tasks: TaskFact[]): TaskProgress {
   const done = count('done');
   const inReview = count('in-review');
   const inProgress = count('in-progress');
-  return { total, done, inReview, inProgress, todo: total - done - inReview - inProgress };
+  const todo = count('to-do');
+  return { total, done, inReview, inProgress, todo, other: total - done - inReview - inProgress - todo };
 }
 
 /** Task statuses that mean the Task was picked up at some point. */
@@ -172,7 +178,7 @@ export function featureStatus(facts: FeatureFacts): ComputedStatus {
   const everyMr = (state: MrFact['state']) => facts.mrs.length > 0 && facts.mrs.every((mr) => mr.state === state);
 
   const shipped = facts.mrs.length > 0 ? everyMr('merged') : facts.epicDone === true;
-  const hasOpenTask = facts.tasks.some((t) => t.status !== 'done' && t.status !== 'wont-do');
+  const hasOpenTask = facts.tasks.some(isOpen);
 
   const status: FeatureStatus =
     facts.cancelled || everyMr('closed')
@@ -193,6 +199,10 @@ export function featureStatus(facts: FeatureFacts): ComputedStatus {
   // ponytail: no clock, so a Feature counts as stalled the moment its last
   // session goes idle. Pass `now` and compare it to `updatedAt` if the flag
   // turns out to flicker on the board.
-  const stalled = status === 'in_progress' && !blocked && !facts.sessions.some((s) => s.status === 'running');
+  const stalled =
+    status === 'in_progress' &&
+    !blocked &&
+    facts.tasks.length > 0 &&
+    !facts.sessions.some((s) => s.status === 'running');
   return { status, stalled, blocked };
 }

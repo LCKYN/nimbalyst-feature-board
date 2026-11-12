@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boardRows, parseJiraCache, readJiraCache, type JiraEpic } from '../board';
+import { ago, boardRows, parseJiraCache, readJiraCache, type JiraEpic } from '../board';
 import type { Feature } from '../features';
 import type { TaskFact } from '../featureStatus';
 
@@ -116,6 +116,26 @@ describe('boardRows', () => {
     ]);
   });
 
+  it('finds the Epic by the file name before `epic:`, so a stale `epic:` line gives no second row', () => {
+    const rows = boardRows(
+      [feature({ id: 'RDHR-170', epic: 'RDHR-144' })],
+      new Map(),
+      cache(epic(), epic({ key: 'RDHR-170', status: 'To Do' })),
+    );
+    expect(rows.map((r) => [r.id, r.epic?.key, Boolean(r.feature)])).toEqual([
+      ['RDHR-144', 'RDHR-144', false],
+      ['RDHR-170', 'RDHR-170', true],
+    ]);
+    // A draft file still finds its Epic through `epic:`.
+    const [draft] = boardRows([feature({ id: 'draft-qr', epic: 'RDHR-144' })], new Map(), cache(epic()));
+    expect(draft).toMatchObject({ id: 'draft-qr', epic: { key: 'RDHR-144' }, unknown: undefined });
+  });
+
+  it('reads a Jira status with stray blanks or another case', () => {
+    const rows = boardRows([], new Map(), cache(epic({ key: 'A-1', status: 'Done ' }), epic({ key: 'A-2', status: ' in progress' })));
+    expect(statusOf(rows)).toEqual({ 'A-1': 'done', 'A-2': 'in_progress' });
+  });
+
   it('says unknown instead of computing without Jira when the Feature names an Epic the cache does not hold', () => {
     const named = feature({ id: 'ISF-99', epic: 'ISF-99' });
     expect(boardRows([named], new Map(), cache(epic()))[0]).toMatchObject({ unknown: 'Jira not read', epic: undefined });
@@ -129,10 +149,27 @@ describe('parseJiraCache', () => {
   it('throws for anything that is not a cache and drops entries without a key', () => {
     expect(() => parseJiraCache('not json')).toThrow();
     expect(() => parseJiraCache('{"fetchedAt":"x"}')).toThrow('epics');
-    expect(parseJiraCache('{"fetchedAt":"t","epics":[{"key":"A-1","status":"Done"},{"title":"no key"}]}')).toEqual({
+    expect(
+      parseJiraCache(
+        '{"fetchedAt":"t","epics":[{"key":"A-1","status":"Done","openCards":0,"cardsInProgress":0},{"title":"no key"}]}',
+      ),
+    ).toEqual({
       fetchedAt: 't',
       epics: [{ key: 'A-1', title: 'A-1', status: 'Done', labels: [], openCards: 0, cardsInProgress: 0 }],
     });
+  });
+
+  it('rejects a partial cache: an entry without a status or a card count is not "no open card"', () => {
+    const entry = (fields: string) => `{"fetchedAt":"t","epics":[{"key":"A-1"${fields}}]}`;
+    expect(() => parseJiraCache(entry(',"status":"To Do"'))).toThrow('A-1 has no openCards');
+    expect(() => parseJiraCache(entry(',"status":"To Do","openCards":"3","cardsInProgress":0'))).toThrow('A-1 has no openCards');
+    expect(() => parseJiraCache(entry(',"status":"To Do","openCards":1'))).toThrow('A-1 has no cardsInProgress');
+    expect(() => parseJiraCache(entry(',"openCards":1,"cardsInProgress":0'))).toThrow('A-1 has no status');
+  });
+
+  it('clamps card counts to whole numbers that are not negative', () => {
+    const [e] = parseJiraCache('{"epics":[{"key":"A-1","status":"Done","openCards":-1,"cardsInProgress":2.5}]}').epics;
+    expect(e).toMatchObject({ openCards: 0, cardsInProgress: 2 });
   });
 });
 
@@ -146,5 +183,27 @@ describe('readJiraCache', () => {
     expect(readJiraCache({ success: true, content: '{"fetchedAt":"t","epics":[]}' })).toEqual({
       cache: { fetchedAt: 't', epics: [] },
     });
+  });
+});
+
+describe('ago', () => {
+  const now = Date.parse('2026-11-12T10:00:00Z');
+  const before = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
+
+  it('rounds down to minutes, hours and days', () => {
+    expect(ago(before(0.5), now)).toBe('just now');
+    expect(ago(before(59), now)).toBe('59 min ago');
+    expect(ago(before(60), now)).toBe('1 h ago');
+    expect(ago(before(24 * 60 - 1), now)).toBe('23 h ago');
+    expect(ago(before(24 * 60), now)).toBe('1 d ago');
+  });
+
+  it('is empty for a time that cannot be read or lies in the future', () => {
+    expect(ago('', now)).toBe('');
+    expect(ago('yesterday', now)).toBe('');
+    // A local time written with a Z is hours ahead; that is not "just now".
+    expect(ago('2026-11-12T17:00:00Z', now)).toBe('');
+    // One minute of clock skew still is.
+    expect(ago('2026-11-12T10:00:30Z', now)).toBe('just now');
   });
 });

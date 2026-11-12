@@ -118,6 +118,7 @@ function FeatureRow({ row, hasJira, onOpen }: { row: BoardRow; hasJira: boolean;
     progress.inProgress && `${progress.inProgress} in progress`,
     progress.inReview && `${progress.inReview} in review`,
     progress.todo && `${progress.todo} to do`,
+    progress.other && `${progress.other} unknown status`,
   ].filter(Boolean);
   const mrList = feature && feature.mrs.length > 0 && `MR ${feature.mrs.map((mr) => `!${mr}`).join(' ')}`;
   const meta = [

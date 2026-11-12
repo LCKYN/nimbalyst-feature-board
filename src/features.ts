@@ -18,8 +18,21 @@ export interface Feature {
 
 type Frontmatter = Record<string, string | string[]>;
 
-/** A scalar without its quotes, or without its trailing ` # comment` when it has none. */
-const scalar = (s: string) => /^(['"])(.*)\1/.exec(s)?.[2] ?? s.replace(/(^|\s+)#.*$/, '').trim();
+/**
+ * A scalar the way YAML reads it: a quoted one up to its closing quote with
+ * the escapes undone, a plain one without its trailing ` # comment`, and `~`
+ * or `null` as empty.
+ */
+const scalar = (s: string) => {
+  const double = /^"((?:[^"\\]|\\.)*)"/.exec(s);
+  // ponytail: `\x` becomes `x`, which is right for `\"` and `\\` only; `\n` and
+  // `\u00e9` need the `yaml` package named below.
+  if (double) return double[1].replace(/\\(.)/g, '$1');
+  const single = /^'((?:[^']|'')*)'/.exec(s);
+  if (single) return single[1].replace(/''/g, "'");
+  const plain = s.replace(/(^|\s+)#.*$/, '').trim();
+  return plain === '~' || plain === 'null' ? '' : plain;
+};
 
 /**
  * Reads the frontmatter block of a Feature file, or null when there is none.
@@ -112,19 +125,25 @@ export async function loadFeatures(workspacePath: string): Promise<Feature[]> {
 }
 
 /**
- * The live `feature-task` items of a tracker listing, grouped by the Feature
- * id each one names. Archived Tasks and Tasks without a `featureId` are left out.
+ * The `feature-task` items of a tracker listing, grouped by the Feature id each
+ * one names. Left out: Tasks without a `featureId`, archived Tasks unless they
+ * are `done` (a done Task has run, archived or not), and items the host says
+ * belong to another workspace than `workspace` (a host before 0.82.0 can
+ * answer for the wrong project).
  */
-export function groupTasks(items: any[]): Map<string, TaskFact[]> {
+export function groupTasks(items: any[], workspace?: string): Map<string, TaskFact[]> {
   const byFeature = new Map<string, TaskFact[]>();
   for (const item of items) {
     const raw = item?.customFields?.featureId;
     const featureId = typeof raw === 'string' ? raw.trim() : '';
-    if (item?.type !== 'feature-task' || item.archived || !featureId) continue;
+    // Written once the way the tracker ids are, so `In Progress` and `in_progress` count as `in-progress`.
+    const status = String(item?.status ?? 'to-do').trim().toLowerCase().replace(/[ _]+/g, '-');
+    if (item?.type !== 'feature-task' || !featureId || (item.archived && status !== 'done')) continue;
+    if (workspace && item.workspace && item.workspace !== workspace) continue;
     const task: TaskFact = {
       id: item.id,
       title: item.title ?? '',
-      status: item.status ?? 'to-do',
+      status,
       tags: Array.isArray(item.tags) ? item.tags : [],
       updatedAt: Date.parse(item.updated) || 0,
     };
@@ -135,5 +154,8 @@ export function groupTasks(items: any[]): Map<string, TaskFact[]> {
 
 /** Every Feature's Tasks in this workspace. The host returns an empty list when the tracker cannot be read. */
 export async function loadTasks(workspacePath: string): Promise<Map<string, TaskFact[]>> {
-  return groupTasks((await window.electronAPI.invoke('document-service:tracker-items-list', workspacePath)) ?? []);
+  return groupTasks(
+    (await window.electronAPI.invoke('document-service:tracker-items-list', workspacePath)) ?? [],
+    workspacePath,
+  );
 }

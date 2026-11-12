@@ -28,6 +28,15 @@ describe('Feature files', () => {
     expect(parseFrontmatter('---\nmrs:\n  - 1\n  - 2\nkind: bug\n---\n')).toEqual({ mrs: ['1', '2'], kind: 'bug' });
   });
 
+  it('reads quoted scalars the way YAML does: escapes, an inner quote, a comment after the closing quote', () => {
+    const title = (line: string) => parseFrontmatter(`---\ntitle: ${line}\n---\n`)?.title;
+    expect(title('"He said \\"hi\\": ok"  # was "x"')).toBe('He said "hi": ok');
+    expect(title('"Export" # the "PDF" one')).toBe('Export');
+    expect(title("'It''s: done'")).toBe("It's: done");
+    expect(title("'Pay by QR'  # sales call it 'scan to pay'")).toBe('Pay by QR');
+    expect(toFeature('/x/RDHR-1.md', '---\nepic: ~\nbranch: null\n---\n')).toMatchObject({ epic: '', branch: '' });
+  });
+
   it('takes the id from the file name and skips INDEX.md and _files by name', () => {
     expect(toFeature('/repo/.features/issue-12.md', FILE)).toMatchObject({
       id: 'issue-12',
@@ -84,6 +93,44 @@ describe('groupTasks', () => {
     expect(grouped.get('mr-1')?.map((t) => t.id)).toEqual(['b', 'padded']);
     expect(grouped.get('RDHR-144')).toEqual([
       { id: 'a', title: 'a', status: 'done', tags: ['blocked'], updatedAt: Date.parse('2026-11-12T06:11:53.450Z') },
+    ]);
+  });
+
+  const item = (id: string, over: object = {}) => ({
+    id,
+    type: 'feature-task',
+    status: 'to-do',
+    customFields: { featureId: 'mr-1' },
+    ...over,
+  });
+  const statuses = (items: object[], workspace?: string) =>
+    (groupTasks(items, workspace).get('mr-1') ?? []).map((t) => [t.id, t.status]);
+
+  it('writes every Task status the way the tracker ids are written', () => {
+    expect(
+      statuses([
+        item('a', { status: 'In Progress' }),
+        item('b', { status: 'in_progress' }),
+        item('c', { status: ' Done ' }),
+        item('d', { status: null }),
+      ]),
+    ).toEqual([
+      ['a', 'in-progress'],
+      ['b', 'in-progress'],
+      ['c', 'done'],
+      ['d', 'to-do'],
+    ]);
+  });
+
+  it('keeps an archived Task that is done, because it has run, and drops other archived ones', () => {
+    expect(statuses([item('a', { status: 'done', archived: true }), item('b', { archived: true })])).toEqual([['a', 'done']]);
+  });
+
+  it('drops items the host returned for another workspace', () => {
+    const items = [item('a', { workspace: '/ws' }), item('b', { workspace: '/other' }), item('c')];
+    expect(statuses(items, '/ws')).toEqual([
+      ['a', 'to-do'],
+      ['c', 'to-do'],
     ]);
   });
 });

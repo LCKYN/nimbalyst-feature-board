@@ -23,10 +23,20 @@ export interface JiraCache {
   epics: JiraEpic[];
 }
 
-/** The cache file's contents; throws with the reason when the text is not a cache. Entries without a key are dropped. */
+/**
+ * The cache file's contents; throws with the reason when the text is not a
+ * cache. Entries without a key are dropped. An entry without a status or a
+ * card count makes the whole cache invalid: the rules forbid a partial write,
+ * and a missing count read as 0 would pass for "no open card".
+ */
 export function parseJiraCache(text: string): JiraCache {
   const raw = JSON.parse(text);
   if (!raw || !Array.isArray(raw.epics)) throw new Error('it has no "epics" list');
+  const need = (e: any, field: string, type: string) => {
+    if (typeof e[field] !== type) throw new Error(`${e.key} has no ${field}`);
+    return e[field];
+  };
+  const count = (e: any, field: string) => Math.max(0, Math.trunc(need(e, field, 'number')));
   return {
     fetchedAt: typeof raw.fetchedAt === 'string' ? raw.fetchedAt : '',
     epics: raw.epics
@@ -34,10 +44,10 @@ export function parseJiraCache(text: string): JiraCache {
       .map((e: any): JiraEpic => ({
         key: e.key,
         title: typeof e.title === 'string' ? e.title : e.key,
-        status: typeof e.status === 'string' ? e.status : '',
+        status: need(e, 'status', 'string').trim(),
         labels: Array.isArray(e.labels) ? e.labels.filter((l: unknown) => typeof l === 'string') : [],
-        openCards: Number(e.openCards) || 0,
-        cardsInProgress: Number(e.cardsInProgress) || 0,
+        openCards: count(e, 'openCards'),
+        cardsInProgress: count(e, 'cardsInProgress'),
       })),
   };
 }
@@ -112,15 +122,16 @@ export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, c
     const own = tasks.get(id) ?? [];
     const progress = taskProgress(own);
     const mrStateUnknown = (feature?.mrs.length ?? 0) > 0;
+    const jiraStatus = epic?.status.trim().toLowerCase();
     const hasOpenCard = epic ? epic.openCards > 0 : undefined;
-    const inProgressInJira = epic ? epic.cardsInProgress > 0 || epic.status.toLowerCase() === 'in progress' : undefined;
+    const inProgressInJira = epic ? epic.cardsInProgress > 0 || jiraStatus === 'in progress' : undefined;
     const { status, blocked } = featureStatus({
       featureId: id,
       cancelled: epic?.labels.includes('rejected'),
       hasOpenCard,
       inProgressInJira,
       // The Epic decides "shipped" only for a Feature without MRs; with MRs their state does, and it is not read.
-      epicDone: epic && !mrStateUnknown ? epic.status.toLowerCase() === 'done' : undefined,
+      epicDone: epic && !mrStateUnknown ? jiraStatus === 'done' : undefined,
       hasWorktree: false,
       tasks: own,
       sessions: [],
@@ -133,7 +144,8 @@ export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, c
   };
 
   const rows = features.map((feature) => {
-    const epic = epics.get(feature.epic || feature.id);
+    // In a Jira repo the file name is the Epic key; `epic:` only finds the Epic of a draft-* file.
+    const epic = epics.get(feature.id) ?? epics.get(feature.epic);
     if (epic) withFile.add(epic.key);
     return row(feature.id, feature.title, feature.kind, feature, epic);
   });
@@ -148,10 +160,10 @@ export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, c
   return rows.sort(byId);
 }
 
-/** "5 min ago", "3 h ago", "2 d ago"; empty for a time that cannot be read. */
+/** "5 min ago", "3 h ago", "2 d ago"; empty for a time that cannot be read or is more than a minute ahead of `now`. */
 export function ago(iso: string, now: number): string {
   const minutes = Math.floor((now - Date.parse(iso)) / 60_000);
-  if (Number.isNaN(minutes)) return '';
+  if (Number.isNaN(minutes) || minutes < -1) return '';
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes} min ago`;
   if (minutes < 60 * 24) return `${Math.floor(minutes / 60)} h ago`;

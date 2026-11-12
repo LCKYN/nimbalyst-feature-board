@@ -116,6 +116,18 @@ describe('featureStatus', () => {
     expect(featureStatus(facts({ tasks: [task()], sessions: [session({ status: 'error' })] }))).toEqual(blocked);
   });
 
+  it('ignores a blocked tag left on a Task that is closed', () => {
+    for (const closed of ['done', 'wont-do']) {
+      const stale = facts({ tasks: [task({ status: closed, tags: ['blocked'] }), task({ id: 't2' })] });
+      expect(featureStatus(stale).blocked).toBe(false);
+      expect(waitItems(stale).stuck).toEqual([]);
+    }
+  });
+
+  it('is not stalled without Tasks', () => {
+    expect(featureStatus(facts({ inProgressInJira: true }))).toEqual({ status: 'in_progress', stalled: false, blocked: false });
+  });
+
   it('raises no flag outside in_progress', () => {
     const waiting = facts({ tasks: [task({ tags: ['blocked'] })], sessions: [session({ hasPendingPrompt: true })] });
     expect(featureStatus(waiting)).toEqual({ status: 'awaiting_decision', stalled: false, blocked: false });
@@ -163,6 +175,11 @@ describe('taskProgress', () => {
       inReview: 1,
       inProgress: 1,
       todo: 1,
+      other: 0,
     });
+  });
+
+  it('counts a status it does not know as open, apart from to do', () => {
+    expect(taskProgress([task({ status: 'completed' }), task({ status: 'to-do' })])).toMatchObject({ total: 2, todo: 1, other: 1 });
   });
 });
