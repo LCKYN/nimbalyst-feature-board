@@ -23,15 +23,10 @@ export interface JiraCache {
   epics: JiraEpic[];
 }
 
-/** The cache file's contents, or null when it is missing or not a cache. Entries without a key are dropped. */
-export function parseJiraCache(text: string): JiraCache | null {
-  let raw: any;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (!raw || !Array.isArray(raw.epics)) return null;
+/** The cache file's contents; throws with the reason when the text is not a cache. Entries without a key are dropped. */
+export function parseJiraCache(text: string): JiraCache {
+  const raw = JSON.parse(text);
+  if (!raw || !Array.isArray(raw.epics)) throw new Error('it has no "epics" list');
   return {
     fetchedAt: typeof raw.fetchedAt === 'string' ? raw.fetchedAt : '',
     epics: raw.epics
@@ -47,16 +42,37 @@ export function parseJiraCache(text: string): JiraCache | null {
   };
 }
 
-export async function loadJiraCache(workspacePath: string): Promise<JiraCache | null> {
-  const result = await window.electronAPI.invoke('read-file-content', `${workspacePath}/.features/jira-cache.json`);
-  return result?.success ? parseJiraCache(result.content) : null;
+export interface JiraRead {
+  /** Null when there is no cache file, and when there is one that could not be read. */
+  cache: JiraCache | null;
+  /** Why the file that is there could not be read. Absent when the file is absent, which is not an error. */
+  error?: string;
+}
+
+/** The cache from the host's reply to reading its file. The host answers `null` for a file that does not exist. */
+export function readJiraCache(result: { success?: boolean; content?: string; error?: string } | null | undefined): JiraRead {
+  if (result == null) return { cache: null };
+  try {
+    if (!result.success) throw new Error(result.error || 'the read failed');
+    return { cache: parseJiraCache(result.content ?? '') };
+  } catch (e) {
+    return { cache: null, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function loadJiraCache(workspacePath: string): Promise<JiraRead> {
+  const read = readJiraCache(
+    await window.electronAPI.invoke('read-file-content', `${workspacePath}/.features/jira-cache.json`),
+  );
+  if (read.error) console.warn('[feature-board] jira-cache.json could not be read:', read.error);
+  return read;
 }
 
 export interface BoardRow {
   id: string;
   title: string;
   kind: string;
-  /** Absent for an Epic that has no Feature file yet. */
+  /** Absent for an Epic, or for Tasks, with no Feature file in this checkout. */
   feature?: Feature;
   /** Absent when the Feature has no Epic, or the Epic is not in the cache. */
   epic?: JiraEpic;
@@ -64,17 +80,25 @@ export interface BoardRow {
   status: FeatureStatus;
   blocked: boolean;
   /**
-   * The file lists MRs, whose state the board does not read yet, so the status
-   * can be neither `done` nor `cancelled` and is only right while work is open.
+   * The file lists MRs, whose state the board does not read yet. Such a row is
+   * never `done` (a Done Epic does not stand in for the MRs) and its status is
+   * only right while work is open; `cancelled` still comes from the `rejected` label.
    */
   mrStateUnknown: boolean;
+  /**
+   * Set when `status` was computed without a fact it needs, so the board says
+   * "unknown" in its place: the Feature names an Epic the cache does not hold,
+   * or it lists MRs and nothing open (Task, card, Jira In Progress) explains its status.
+   */
+  unknown?: 'Jira not read' | 'MR state not read';
 }
 
 const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id, undefined, { numeric: true });
 
 /**
- * One row per Feature file, plus one per cached Epic that has no file, each
- * with its status from the rules table.
+ * One row per Feature file, plus one per cached Epic that has no file and one
+ * per Task `featureId` that matches neither, each with its status from the
+ * rules table.
  *
  * ponytail: sessions, worktrees and MR state are not read yet, so a row is
  * never `awaiting_decision`, `consulting` or `started`, and the `stalled` flag
@@ -86,19 +110,26 @@ export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, c
 
   const row = (id: string, title: string, kind: string, feature?: Feature, epic?: JiraEpic): BoardRow => {
     const own = tasks.get(id) ?? [];
+    const progress = taskProgress(own);
+    const mrStateUnknown = (feature?.mrs.length ?? 0) > 0;
+    const hasOpenCard = epic ? epic.openCards > 0 : undefined;
+    const inProgressInJira = epic ? epic.cardsInProgress > 0 || epic.status.toLowerCase() === 'in progress' : undefined;
     const { status, blocked } = featureStatus({
       featureId: id,
       cancelled: epic?.labels.includes('rejected'),
-      hasOpenCard: epic ? epic.openCards > 0 : undefined,
-      inProgressInJira: epic ? epic.cardsInProgress > 0 || epic.status.toLowerCase() === 'in progress' : undefined,
-      epicDone: epic ? epic.status.toLowerCase() === 'done' : undefined,
+      hasOpenCard,
+      inProgressInJira,
+      // The Epic decides "shipped" only for a Feature without MRs; with MRs their state does, and it is not read.
+      epicDone: epic && !mrStateUnknown ? epic.status.toLowerCase() === 'done' : undefined,
       hasWorktree: false,
       tasks: own,
       sessions: [],
       mrs: [],
     });
-    const mrStateUnknown = (feature?.mrs.length ?? 0) > 0;
-    return { id, title, kind, feature, epic, progress: taskProgress(own), status, blocked, mrStateUnknown };
+    const explained = status === 'cancelled' || progress.total > progress.done || hasOpenCard || inProgressInJira;
+    const unknown =
+      feature?.epic && !epic ? 'Jira not read' : mrStateUnknown && !explained ? 'MR state not read' : undefined;
+    return { id, title, kind, feature, epic, progress, status, blocked, mrStateUnknown, unknown };
   };
 
   const rows = features.map((feature) => {
@@ -108,6 +139,11 @@ export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, c
   });
   for (const epic of epics.values()) {
     if (!withFile.has(epic.key)) rows.push(row(epic.key, epic.title, '', undefined, epic));
+  }
+  // Tasks that name no row above (a renamed file, a file on another branch) must not vanish.
+  const placed = new Set(rows.map((r) => r.id));
+  for (const id of tasks.keys()) {
+    if (!placed.has(id)) rows.push(row(id, id, ''));
   }
   return rows.sort(byId);
 }

@@ -8,6 +8,8 @@ interface Loaded {
   features: Feature[];
   tasks: Map<string, TaskFact[]>;
   jira: JiraCache | null;
+  /** Why `jira-cache.json` is there but could not be read. */
+  jiraError?: string;
 }
 
 const CLOSED: FeatureStatus[] = ['done', 'cancelled'];
@@ -33,7 +35,10 @@ export function FeatureBoard({ host }: PanelHostProps) {
     let cancelled = false;
     const ws = host.workspacePath;
     Promise.all([loadFeatures(ws), loadTasks(ws), loadJiraCache(ws)])
-      .then(([features, tasks, jira]) => !cancelled && setLoaded({ features, tasks, jira }))
+      .then(
+        ([features, tasks, jira]) =>
+          !cancelled && setLoaded({ features, tasks, jira: jira.cache, jiraError: jira.error }),
+      )
       .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
     return () => {
       cancelled = true;
@@ -59,12 +64,16 @@ export function FeatureBoard({ host }: PanelHostProps) {
             Show done ({closedCount})
           </label>
         )}
-        <span className="feature-board-jira-age ml-auto text-xs text-nim-muted">
-          {jira
-            ? `Jira read ${ago(jira.fetchedAt, Date.now()) || 'at an unknown time'} · /feature-sync refreshes it`
-            : jiraNeverSynced
-              ? 'Jira status not read yet · run /feature-sync'
-              : ''}
+        <span
+          className={`feature-board-jira-age ml-auto text-xs select-text ${loaded?.jiraError ? 'text-nim-error' : 'text-nim-muted'}`}
+        >
+          {loaded?.jiraError
+            ? `jira-cache.json could not be read (${loaded.jiraError}) · Jira status unknown · run /feature-sync`
+            : jira
+              ? `Jira read ${ago(jira.fetchedAt, Date.now()) || 'at an unknown time'} · /feature-sync refreshes it`
+              : jiraNeverSynced
+                ? 'Jira status not read yet · run /feature-sync'
+                : ''}
         </span>
       </div>
       <div className="feature-board-body flex-1 overflow-auto p-4">
@@ -110,12 +119,13 @@ function FeatureRow({ row, hasJira, onOpen }: { row: BoardRow; hasJira: boolean;
     progress.inReview && `${progress.inReview} in review`,
     progress.todo && `${progress.todo} to do`,
   ].filter(Boolean);
+  const mrList = feature && feature.mrs.length > 0 && `MR ${feature.mrs.map((mr) => `!${mr}`).join(' ')}`;
   const meta = [
     feature?.kind,
     feature?.branch,
-    feature && feature.mrs.length > 0 && `MR ${feature.mrs.map((mr) => `!${mr}`).join(' ')}`,
+    mrList,
     feature && feature.relates.length > 0 && `relates to ${feature.relates.join(', ')}`,
-    !feature && 'no Feature file',
+    !feature && 'no Feature file in this checkout',
   ].filter(Boolean);
   const open = feature ? () => onOpen(feature.path) : undefined;
 
@@ -134,18 +144,35 @@ function FeatureRow({ row, hasJira, onOpen }: { row: BoardRow; hasJira: boolean;
           <span className="feature-row-title text-nim-muted">{row.title}</span>
         )}
         {meta.length > 0 && <div className="feature-row-meta mt-0.5 text-xs text-nim-faint">{meta.join(' · ')}</div>}
+        {feature?.unreadable && (
+          <div className="feature-row-unreadable mt-0.5 text-xs text-nim-error">
+            File not read as a Feature: {feature.unreadable}
+          </div>
+        )}
       </td>
       <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-nim-muted">{row.id}</td>
       <td className="feature-row-status whitespace-nowrap px-3 py-2">
         <span className="flex items-center gap-1.5">
-          <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[row.status]}`} />
-          {STATUS_LABEL[row.status]}
+          {row.unknown ? (
+            // The status was computed without a fact it needs, so no dot and no label.
+            <span className="feature-row-unknown text-nim-muted">
+              unknown · {row.unknown === 'MR state not read' ? `${mrList} not checked` : row.unknown}
+            </span>
+          ) : (
+            <>
+              <span className={`h-2 w-2 shrink-0 rounded-full ${STATUS_DOT[row.status]}`} />
+              {STATUS_LABEL[row.status]}
+            </>
+          )}
           {row.blocked && <span className="text-xs text-nim-error">blocked</span>}
         </span>
-        {row.mrStateUnknown && <div className="mt-0.5 text-xs text-nim-faint">MR state not read</div>}
+        {row.mrStateUnknown && row.unknown !== 'MR state not read' && (
+          <div className="mt-0.5 text-xs text-nim-faint">MR state not read</div>
+        )}
       </td>
       {hasJira && (
         <td className="feature-row-jira whitespace-nowrap px-3 py-2 text-nim-muted">
+          {!epic && feature?.epic && `${feature.epic} not in cache`}
           {epic && (
             <>
               {epic.status}

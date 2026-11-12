@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boardRows, parseJiraCache, type JiraEpic } from '../board';
+import { boardRows, parseJiraCache, readJiraCache, type JiraEpic } from '../board';
 import type { Feature } from '../features';
 import type { TaskFact } from '../featureStatus';
 
@@ -72,19 +72,79 @@ describe('boardRows', () => {
     expect(row.progress).toMatchObject({ total: 2, done: 1 });
   });
 
-  it('works without a Jira cache and flags Features whose MR state is not read', () => {
-    const [row] = boardRows([feature({ id: 'mr-1', epic: '', mrs: ['1'] })], new Map([['mr-1', [task('done')]]]), null);
-    expect(row).toMatchObject({ status: 'in_progress', epic: undefined, mrStateUnknown: true });
+  it('says unknown for a Feature that lists MRs when nothing open explains its status', () => {
+    const mrOnly = feature({ id: 'mr-1', epic: '', mrs: ['345'] });
+    // No Epic and no Tasks, or every Task done: the MRs alone decide, and they are not read.
+    expect(boardRows([mrOnly], new Map(), null)[0]).toMatchObject({ unknown: 'MR state not read', epic: undefined });
+    expect(boardRows([mrOnly], new Map([['mr-1', [task('done')]]]), null)[0].unknown).toBe('MR state not read');
+    // card-do moves the Epic to Done while the MR is only opened, so the Epic alone is never `done`.
+    const [shipped] = boardRows([feature({ mrs: ['345'] })], new Map(), cache(epic({ status: 'Done' })));
+    expect(shipped.status).not.toBe('done');
+    expect(shipped.unknown).toBe('MR state not read');
+  });
+
+  it('keeps the computed status of a Feature that lists MRs while work is open, and cancelled from the label', () => {
+    const mrOnly = feature({ id: 'mr-1', epic: '', mrs: ['345'] });
+    const openTask = boardRows([mrOnly], new Map([['mr-1', [task('to-do')]]]), null)[0];
+    expect(openTask).toMatchObject({ status: 'todo', mrStateUnknown: true });
+    expect(openTask.unknown).toBeUndefined();
+
+    const withMrs = feature({ mrs: ['345'] });
+    const statusWith = (e: JiraEpic) => {
+      const [row] = boardRows([withMrs], new Map(), cache(e));
+      return [row.status, row.unknown];
+    };
+    expect(statusWith(epic())).toEqual(['in_progress', undefined]);
+    expect(statusWith(epic({ status: 'Done', openCards: 1 }))).toEqual(['todo', undefined]);
+    expect(statusWith(epic({ status: 'Done', labels: ['rejected'] }))).toEqual(['cancelled', undefined]);
+  });
+
+  it('gives Tasks whose featureId matches no Feature file or Epic a row of their own', () => {
+    const rows = boardRows([], new Map([['mr-1', [task('to-do')]]]), null);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: 'mr-1', title: 'mr-1', feature: undefined, progress: { total: 1 } });
+
+    // The rename draft-<slug>.md -> Epic key leaves the Tasks on the old id.
+    const renamed = boardRows(
+      [feature({ id: 'RDHR-200', epic: 'RDHR-200' })],
+      new Map([['draft-qr', [task('in-progress')]]]),
+      cache(epic({ key: 'RDHR-200', status: 'Done' })),
+    );
+    expect(renamed.map((r) => [r.id, r.status, r.progress.total])).toEqual([
+      ['draft-qr', 'in_progress', 1],
+      ['RDHR-200', 'done', 0],
+    ]);
+  });
+
+  it('says unknown instead of computing without Jira when the Feature names an Epic the cache does not hold', () => {
+    const named = feature({ id: 'ISF-99', epic: 'ISF-99' });
+    expect(boardRows([named], new Map(), cache(epic()))[0]).toMatchObject({ unknown: 'Jira not read', epic: undefined });
+    expect(boardRows([named], new Map(), null)[0].unknown).toBe('Jira not read');
+    expect(boardRows([{ ...named, epic: '' }], new Map(), cache(epic()))[0].unknown).toBeUndefined();
+    expect(boardRows([feature()], new Map(), cache(epic()))[0].unknown).toBeUndefined();
   });
 });
 
 describe('parseJiraCache', () => {
-  it('returns null for anything that is not a cache and drops entries without a key', () => {
-    expect(parseJiraCache('not json')).toBeNull();
-    expect(parseJiraCache('{"fetchedAt":"x"}')).toBeNull();
+  it('throws for anything that is not a cache and drops entries without a key', () => {
+    expect(() => parseJiraCache('not json')).toThrow();
+    expect(() => parseJiraCache('{"fetchedAt":"x"}')).toThrow('epics');
     expect(parseJiraCache('{"fetchedAt":"t","epics":[{"key":"A-1","status":"Done"},{"title":"no key"}]}')).toEqual({
       fetchedAt: 't',
       epics: [{ key: 'A-1', title: 'A-1', status: 'Done', labels: [], openCards: 0, cardsInProgress: 0 }],
+    });
+  });
+});
+
+describe('readJiraCache', () => {
+  it('tells a cache that could not be read from one that is not there', () => {
+    // The host answers null for a file that does not exist: no cache, and not an error.
+    expect(readJiraCache(null)).toEqual({ cache: null });
+    expect(readJiraCache({ success: true, content: '{"epics": [' }).error).toBeTruthy();
+    expect(readJiraCache({ success: true, content: '{}' })).toEqual({ cache: null, error: 'it has no "epics" list' });
+    expect(readJiraCache({ success: false, error: 'EACCES' })).toEqual({ cache: null, error: 'EACCES' });
+    expect(readJiraCache({ success: true, content: '{"fetchedAt":"t","epics":[]}' })).toEqual({
+      cache: { fetchedAt: 't', epics: [] },
     });
   });
 });

@@ -67,7 +67,10 @@ export interface FeatureFacts {
   hasOpenCard?: boolean;
   /** The Epic, or a card under it, is In Progress in Jira. */
   inProgressInJira?: boolean;
-  /** The Feature's Epic is Done. It decides "shipped" only when the Feature has no MRs (a no-MR repo). */
+  /**
+   * The Feature's Epic is Done. It decides "shipped" only when `mrs` is empty (a no-MR repo), so a caller
+   * that knows the Feature has MRs but cannot read their state must leave this undefined.
+   */
   epicDone?: boolean;
   /** A worktree for the Feature's `branch` exists. */
   hasWorktree: boolean;

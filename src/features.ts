@@ -12,6 +12,8 @@ export interface Feature {
   relates: string[];
   mrs: string[];
   source: string;
+  /** Why the file could not be read as a Feature (no frontmatter block, a failed read); the fields above are then empty. */
+  unreadable?: string;
 }
 
 type Frontmatter = Record<string, string | string[]>;
@@ -27,7 +29,7 @@ const scalar = (s: string) => /^(['"])(.*)\1/.exec(s)?.[2] ?? s.replace(/(^|\s+)
  * package if Feature files ever grow nested values or multi-line strings.
  */
 export function parseFrontmatter(text: string): Frontmatter | null {
-  const block = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+  const block = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
   if (!block) return null;
 
   const out: Frontmatter = {};
@@ -59,23 +61,28 @@ export function parseFrontmatter(text: string): Frontmatter | null {
 const text = (v: string | string[] | undefined) => (typeof v === 'string' ? v : '');
 const list = (v: string | string[] | undefined) => (Array.isArray(v) ? v : v ? [v] : []);
 
-/** A Feature from one `.features/` file, or null for files that are not Features (INDEX.md, _template.md). */
-export function toFeature(path: string, content: string): Feature | null {
+/**
+ * A Feature from one `.features/` file, or null for the files that are not
+ * Features, which is decided by name alone: `INDEX.md` and `_*`. Every other
+ * `.md` is a Feature, so one that cannot be read (`readError`) or has no
+ * frontmatter block stays on the board, with `unreadable` saying why.
+ */
+export function toFeature(path: string, content: string, readError?: string): Feature | null {
   const name = path.split(/[\\/]/).pop() ?? '';
-  if (!name.endsWith('.md') || name.startsWith('_')) return null;
-  const fm = parseFrontmatter(content);
-  if (!fm) return null;
+  if (!name.endsWith('.md') || name.startsWith('_') || name === 'INDEX.md') return null;
+  const fm = readError ? null : parseFrontmatter(content);
   const id = name.slice(0, -3);
   return {
     id,
     path,
-    title: text(fm.title) || id,
-    kind: text(fm.kind),
-    epic: text(fm.epic),
-    branch: text(fm.branch),
-    relates: list(fm.relates),
-    mrs: list(fm.mrs),
-    source: text(fm.source),
+    title: text(fm?.title) || id,
+    kind: text(fm?.kind),
+    epic: text(fm?.epic),
+    branch: text(fm?.branch),
+    relates: list(fm?.relates),
+    mrs: list(fm?.mrs),
+    source: text(fm?.source),
+    unreadable: readError ?? (fm ? undefined : 'no frontmatter block'),
   };
 }
 
@@ -92,7 +99,13 @@ export async function loadFeatures(workspacePath: string): Promise<Feature[]> {
   const features = await Promise.all(
     files.map(async (file) => {
       const result = await window.electronAPI.invoke('read-file-content', file.path);
-      return result?.success ? toFeature(file.path, result.content) : null;
+      // The host answers null for a file that is gone since the listing; anything else is a row.
+      if (result == null) return null;
+      const feature = result.success
+        ? toFeature(file.path, result.content)
+        : toFeature(file.path, '', result.error || 'the read failed');
+      if (feature?.unreadable) console.warn('[feature-board] Feature file not readable:', file.name, feature.unreadable);
+      return feature;
     }),
   );
   return features.filter((f): f is Feature => f !== null).sort((a, b) => a.id.localeCompare(b.id));
@@ -105,8 +118,9 @@ export async function loadFeatures(workspacePath: string): Promise<Feature[]> {
 export function groupTasks(items: any[]): Map<string, TaskFact[]> {
   const byFeature = new Map<string, TaskFact[]>();
   for (const item of items) {
-    const featureId = item?.customFields?.featureId;
-    if (item?.type !== 'feature-task' || item.archived || typeof featureId !== 'string' || !featureId) continue;
+    const raw = item?.customFields?.featureId;
+    const featureId = typeof raw === 'string' ? raw.trim() : '';
+    if (item?.type !== 'feature-task' || item.archived || !featureId) continue;
     const task: TaskFact = {
       id: item.id,
       title: item.title ?? '',
