@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   featureStatus,
+  taskProgress,
   waitItems,
   type FeatureFacts,
   type MrFact,
@@ -44,7 +45,7 @@ describe('featureStatus', () => {
       cancelled: true,
       mrs: [mr({ state: 'merged' })],
       sessions: [session({ hasPendingPrompt: true })],
-      tasks: [task()],
+      tasks: [task({ status: 'done' })],
       hasWorktree: true,
     });
     expect(featureStatus(all).status).toBe('cancelled');
@@ -72,10 +73,15 @@ describe('featureStatus', () => {
     expect(status({ mrs: [mr({ state: 'closed' }), mr({ id: '346', state: 'merged' })] })).toBe('todo');
   });
 
-  it('is done only when every MR merged and no card is open', () => {
+  it('is done only when every MR merged and no card or Task is open', () => {
     const merged = [mr({ state: 'merged' }), mr({ id: '346', state: 'merged' })];
     expect(status({ mrs: merged })).toBe('done');
     expect(status({ mrs: merged, hasOpenCard: true })).toBe('todo');
+    expect(status({ mrs: merged, tasks: [task({ status: 'in-review' })] })).toBe('in_progress');
+    // Without MRs the Epic decides; with MRs a Done Epic does not override an open one.
+    expect(status({ epicDone: true })).toBe('done');
+    expect(status({ epicDone: true, mrs: [mr()] })).toBe('todo');
+    expect(status({ inProgressInJira: true })).toBe('in_progress');
     expect(status({ mrs: [merged[0], mr({ id: '346' })] })).toBe('todo');
     // A Task marked done does not finish a Feature that has no MR.
     expect(status({ tasks: [task({ status: 'done' })] })).toBe('in_progress');
@@ -145,5 +151,18 @@ describe('waitItems', () => {
   it('ignores review and CI state on an MR that is no longer open', () => {
     const closed = facts({ mrs: [mr({ state: 'merged', awaitsReview: true, ciFailed: true })] });
     expect(waitItems(closed)).toEqual({ waiting: [], stuck: [] });
+  });
+});
+
+describe('taskProgress', () => {
+  it('counts only done Tasks as done and leaves wont-do out of the total', () => {
+    const statuses = ['done', 'done', 'in-review', 'in-progress', 'to-do', 'wont-do'];
+    expect(taskProgress(statuses.map((status, i) => task({ id: `t${i}`, status })))).toEqual({
+      total: 5,
+      done: 2,
+      inReview: 1,
+      inProgress: 1,
+      todo: 1,
+    });
   });
 });

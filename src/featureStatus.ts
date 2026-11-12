@@ -65,6 +65,10 @@ export interface FeatureFacts {
   cancelled?: boolean;
   /** A card (Jira Task or Bug under the Feature's Epic) is still open. */
   hasOpenCard?: boolean;
+  /** The Epic, or a card under it, is In Progress in Jira. */
+  inProgressInJira?: boolean;
+  /** The Feature's Epic is Done. It decides "shipped" only when the Feature has no MRs (a no-MR repo). */
+  epicDone?: boolean;
   /** A worktree for the Feature's `branch` exists. */
   hasWorktree: boolean;
   tasks: TaskFact[];
@@ -128,6 +132,25 @@ export function waitItems(facts: FeatureFacts): WaitLists {
   };
 }
 
+export interface TaskProgress {
+  /** Every Task except the `wont-do` ones, which count nowhere. */
+  total: number;
+  done: number;
+  inReview: number;
+  inProgress: number;
+  todo: number;
+}
+
+/** How far a Feature's Tasks are. Only `done` counts as done: a Task in review is still open. */
+export function taskProgress(tasks: TaskFact[]): TaskProgress {
+  const count = (status: string) => tasks.filter((t) => t.status === status).length;
+  const total = tasks.length - count('wont-do');
+  const done = count('done');
+  const inReview = count('in-review');
+  const inProgress = count('in-progress');
+  return { total, done, inReview, inProgress, todo: total - done - inReview - inProgress };
+}
+
 /** Task statuses that mean the Task was picked up at some point. */
 const RAN = new Set(['in-progress', 'in-review', 'done']);
 
@@ -145,14 +168,17 @@ export function featureStatus(facts: FeatureFacts): ComputedStatus {
   // `every` is true for an empty list, and a Feature with no MR is neither cancelled nor done.
   const everyMr = (state: MrFact['state']) => facts.mrs.length > 0 && facts.mrs.every((mr) => mr.state === state);
 
+  const shipped = facts.mrs.length > 0 ? everyMr('merged') : facts.epicDone === true;
+  const hasOpenTask = facts.tasks.some((t) => t.status !== 'done' && t.status !== 'wont-do');
+
   const status: FeatureStatus =
     facts.cancelled || everyMr('closed')
       ? 'cancelled'
-      : everyMr('merged') && !facts.hasOpenCard
+      : shipped && !hasOpenTask && !facts.hasOpenCard
         ? 'done'
         : waiting.length > 0
           ? 'awaiting_decision'
-          : facts.tasks.some((t) => RAN.has(t.status))
+          : facts.tasks.some((t) => RAN.has(t.status)) || facts.inProgressInJira
             ? 'in_progress'
             : facts.hasWorktree
               ? 'started'

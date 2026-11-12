@@ -1,9 +1,13 @@
+import type { TaskFact } from './featureStatus';
+
 export interface Feature {
   /** File name without `.md`; the rules make this the Feature's id. */
   id: string;
   path: string;
   title: string;
   kind: string;
+  /** Jira Epic key, empty when the repo has no Jira. */
+  epic: string;
   branch: string;
   relates: string[];
   mrs: string[];
@@ -67,6 +71,7 @@ export function toFeature(path: string, content: string): Feature | null {
     path,
     title: text(fm.title) || id,
     kind: text(fm.kind),
+    epic: text(fm.epic),
     branch: text(fm.branch),
     relates: list(fm.relates),
     mrs: list(fm.mrs),
@@ -91,4 +96,30 @@ export async function loadFeatures(workspacePath: string): Promise<Feature[]> {
     }),
   );
   return features.filter((f): f is Feature => f !== null).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * The live `feature-task` items of a tracker listing, grouped by the Feature
+ * id each one names. Archived Tasks and Tasks without a `featureId` are left out.
+ */
+export function groupTasks(items: any[]): Map<string, TaskFact[]> {
+  const byFeature = new Map<string, TaskFact[]>();
+  for (const item of items) {
+    const featureId = item?.customFields?.featureId;
+    if (item?.type !== 'feature-task' || item.archived || typeof featureId !== 'string' || !featureId) continue;
+    const task: TaskFact = {
+      id: item.id,
+      title: item.title ?? '',
+      status: item.status ?? 'to-do',
+      tags: Array.isArray(item.tags) ? item.tags : [],
+      updatedAt: Date.parse(item.updated) || 0,
+    };
+    byFeature.set(featureId, [...(byFeature.get(featureId) ?? []), task]);
+  }
+  return byFeature;
+}
+
+/** Every Feature's Tasks in this workspace. The host returns an empty list when the tracker cannot be read. */
+export async function loadTasks(workspacePath: string): Promise<Map<string, TaskFact[]>> {
+  return groupTasks((await window.electronAPI.invoke('document-service:tracker-items-list', workspacePath)) ?? []);
 }
