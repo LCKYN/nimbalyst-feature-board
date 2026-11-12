@@ -142,8 +142,9 @@ export interface BoardRow {
   blocked: boolean;
   /**
    * The file lists MRs, whose state the board does not read yet. Such a row is
-   * never `done` (a Done Epic does not stand in for the MRs) and its status is
-   * only right while work is open; `cancelled` still comes from the `rejected` label.
+   * never `done` (a Done Epic does not stand in for the MRs, nor for an `mrs`
+   * key that is still empty) and its status is only right while work is open;
+   * `cancelled` still comes from the `rejected` label.
    */
   mrStateUnknown: boolean;
   /**
@@ -187,8 +188,9 @@ export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, c
       cancelled: epic?.labels.includes('rejected'),
       hasOpenCard,
       inProgressInJira,
-      // The Epic decides "shipped" only for a Feature without MRs; with MRs their state does, and it is not read.
-      epicDone: epic && !mrStateUnknown ? jiraStatus === 'done' : undefined,
+      // The Epic decides "shipped" only in a no-MR repo, whose files have no `mrs` key. With the key the MRs
+      // decide: their state is not read, and an empty list has not shipped.
+      epicDone: epic && !feature?.hasMrsKey ? jiraStatus === 'done' : undefined,
       hasWorktree: false,
       tasks: own,
       sessions: [],

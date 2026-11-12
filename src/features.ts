@@ -11,6 +11,11 @@ export interface Feature {
   branch: string;
   relates: string[];
   mrs: string[];
+  /**
+   * The frontmatter has an `mrs` key, also an empty one. A no-MR repo leaves
+   * the key out, so its presence says MR state decides "shipped", not the Epic.
+   */
+  hasMrsKey: boolean;
   /** Why the file could not be read as a Feature (no frontmatter block, a failed read); the fields above are then empty. */
   unreadable?: string;
 }
@@ -93,6 +98,7 @@ export function toFeature(path: string, content: string, readError?: string): Fe
     branch: text(fm?.branch),
     relates: list(fm?.relates),
     mrs: list(fm?.mrs),
+    hasMrsKey: fm?.mrs !== undefined,
     unreadable: readError ?? (fm ? undefined : 'no frontmatter block'),
   };
 }

@@ -49,6 +49,14 @@ describe('Feature files', () => {
     expect(toFeature('/repo/.features/_template.md', FILE)).toBeNull();
   });
 
+  it('remembers whether the file has an `mrs` key, which a no-MR repo leaves out', () => {
+    const withKey = (line: string) => toFeature('/x/ISF-1.md', `---\ntitle: T\n${line}---\n`)?.hasMrsKey;
+    expect(withKey('mrs: []\n')).toBe(true);
+    expect(withKey('mrs: [345]\n')).toBe(true);
+    expect(withKey('mrs:\n')).toBe(true);
+    expect(withKey('')).toBe(false);
+  });
+
   it('keeps a Feature file it cannot read as a row that says why', () => {
     expect(toFeature('/x/ISF-12.md', 'no frontmatter')).toMatchObject({
       id: 'ISF-12',

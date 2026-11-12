@@ -21,6 +21,8 @@ const feature = (over: Partial<Feature> = {}): Feature => ({
   branch: '',
   relates: [],
   mrs: [],
+  // As `toFeature` sets it: a file that lists MRs has the key.
+  hasMrsKey: (over.mrs?.length ?? 0) > 0,
   ...over,
 });
 const epic = (over: Partial<JiraEpic> = {}): JiraEpic => ({
@@ -105,6 +107,15 @@ describe('boardRows', () => {
     expect(statusWith(epic())).toEqual(['in_progress', undefined]);
     expect(statusWith(epic({ status: 'Done', openCards: 1 }))).toEqual(['todo', undefined]);
     expect(statusWith(epic({ status: 'Done', labels: ['rejected'] }))).toEqual(['cancelled', undefined]);
+  });
+
+  it('never takes done from the Epic alone for a file with an `mrs` key, also while it lists no MR yet', () => {
+    const done = cache(epic({ status: 'Done' }));
+    // An MR repo: no MR was opened, the Epic was moved to Done by hand. Not shipped, and no MR state is missing.
+    const [mrRepo] = boardRows([feature({ hasMrsKey: true })], new Map(), done);
+    expect(mrRepo).toMatchObject({ status: 'todo', mrStateUnknown: false, unknown: undefined });
+    // A no-MR repo leaves the key out, and there the Epic decides.
+    expect(boardRows([feature()], new Map(), done)[0].status).toBe('done');
   });
 
   it('gives Tasks whose featureId matches no Feature file or Epic a row of their own', () => {

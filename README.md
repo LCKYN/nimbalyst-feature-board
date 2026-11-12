@@ -5,7 +5,7 @@ A [Nimbalyst](https://github.com/nimbalyst/nimbalyst) extension that adds a full
 ## What the board can show today
 
 - **Four of the seven statuses**: จะทำ, กำลังทำ, เสร็จแล้ว and ยกเลิก. Sessions, worktrees and MR state are not read yet, so รอตัดสินใจ, เริ่มทำ and ปรึกษา never appear, and neither does the `stalled` flag.
-- **`unknown` in place of a status** when a fact it needs was not read: the Feature names an Epic the cache does not hold (`Jira not read`), or it lists MRs and nothing open explains its status (`MR !345 not checked`). A Feature that lists MRs is never เสร็จแล้ว from its Epic alone.
+- **`unknown` in place of a status** when a fact it needs was not read: the Feature names an Epic the cache does not hold (`Jira not read`), or it lists MRs and nothing open explains its status (`MR !345 not checked`). A Feature whose file has an `mrs` key (an MR repo, also while the list is empty) is never เสร็จแล้ว from its Epic alone.
 - **No hand-set status.** The rules let the user set a status by hand on the board; that is not built, so ยกเลิก comes only from the Epic's `rejected` label.
 - **The main checkout's workspace.** The Jira cache and the Tasks are kept with the repo's main checkout. A worktree opened as its own project shows its Feature files without Jira status or Tasks, and the board says so.
 - **Up to 200 entries of `.features/`**, which is where the host cuts a folder listing. The board says when a listing came back at that cap.
