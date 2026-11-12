@@ -328,6 +328,19 @@ export function boardRows(
   return rows.sort(byNeed);
 }
 
+/** The status as the board prints it: "unknown" when it was computed without a fact it needs. */
+const shownStatus = (row: BoardRow) => (row.unknown ? 'unknown' : STATUS_LABEL[row.status]);
+
+/**
+ * The rows as plain text for a message to sales, one line each: title, Jira
+ * status (the board's own when the row has no Epic) and labels. Keys are left
+ * out; sales reads Epic names.
+ */
+export const salesList = (rows: BoardRow[]) =>
+  rows
+    .map((row) => [row.title, row.epic?.status ?? shownStatus(row), row.epic?.labels.join('+')].filter(Boolean).join(' — '))
+    .join('\n');
+
 /**
  * Whether a row has every word of `query` somewhere in its title, id, kind,
  * labels, Jira status or the status the board shows for it. An empty query
@@ -344,7 +357,7 @@ export function matches(row: BoardRow, query: string): boolean {
     row.feature?.kind,
     ...(row.epic?.labels ?? []),
     row.epic?.status,
-    row.unknown ? 'unknown' : STATUS_LABEL[row.status],
+    shownStatus(row),
   ]
     .join(' ')
     .toLowerCase();

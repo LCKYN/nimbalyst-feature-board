@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { PanelHostProps } from '@nimbalyst/extension-sdk';
+import { copyToClipboard, type PanelHostProps } from '@nimbalyst/extension-sdk';
 import {
   ago,
   boardRows,
@@ -10,6 +10,7 @@ import {
   loadBoard,
   localDate,
   matches,
+  salesList,
   touchesFeatures,
   type Board,
   type BoardRow,
@@ -53,6 +54,7 @@ export function FeatureBoard({ host }: PanelHostProps) {
     void host.storage.set('statusOverride', next);
   };
   const [query, setQuery] = useState('');
+  const [copied, setCopied] = useState(false);
   const [reloads, setReloads] = useState(0);
   const reload = () => setReloads((n) => n + 1);
 
@@ -111,6 +113,15 @@ export function FeatureBoard({ host }: PanelHostProps) {
   const filtering = query.trim() !== '';
   // A filter searches the closed rows too: "prod" must find what already shipped.
   const shown = rows?.filter((r) => (filtering ? matches(r, query) : showClosed || !CLOSED.includes(r.status)));
+  // The SDK's helper, not `navigator.clipboard`, which can fail without a sign in Electron.
+  const copyList = () =>
+    copyToClipboard(salesList(shown ?? [])).then(
+      () => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      },
+      (e) => console.error('[feature-board] copy failed:', e),
+    );
   const hasTasks = shown?.some((r) => r.progress.total > 0) ?? false;
   const hasTarget = shown?.some((r) => r.target) ?? false;
   const hasCriteria = shown?.some((r) => r.feature?.criteria.length) ?? false;
@@ -163,6 +174,15 @@ export function FeatureBoard({ host }: PanelHostProps) {
         />
         <button type="button" className="feature-board-refresh text-xs text-nim-muted hover:underline" onClick={reload}>
           Refresh
+        </button>
+        <button
+          type="button"
+          className="feature-board-copy text-xs text-nim-muted hover:underline"
+          title="Copy the rows shown as a plain list: title, Jira status, labels"
+          disabled={!shown?.length}
+          onClick={copyList}
+        >
+          {copied ? `Copied ${shown?.length ?? 0}` : 'Copy list'}
         </button>
         <span
           className={`feature-board-jira-age ml-auto text-xs select-text ${

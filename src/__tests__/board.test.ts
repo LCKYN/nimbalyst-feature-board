@@ -13,6 +13,7 @@ import {
   matches,
   parseJiraCache,
   readJiraCache,
+  salesList,
   touchesFeatures,
   type JiraEpic,
 } from '../board';
@@ -470,6 +471,30 @@ describe('localDate', () => {
     // Half past midnight local time is still "yesterday" in UTC east of Greenwich.
     expect(localDate(new Date(2026, 10, 5, 0, 30))).toBe('2026-11-05');
     expect(localDate(new Date(2026, 0, 31, 23, 59))).toBe('2026-01-31');
+  });
+});
+
+describe('salesList', () => {
+  it('writes one line per row for sales: title, Jira status, labels, and no key', () => {
+    const rows = boardRows(
+      [feature({ id: 'A-1', epic: 'A-1', title: 'Recruit on LINE' }), feature({ id: 'mr-1', epic: '', title: 'One board' })],
+      new Map(),
+      cache(
+        epic({ key: 'A-1', labels: ['demo', 'prod'] }),
+        epic({ key: 'A-2', title: 'Payroll', status: 'To Do', labels: ['demo'] }),
+        epic({ key: 'A-3', title: 'Org sync', status: 'Done' }),
+      ),
+    );
+    expect(salesList(rows)).toBe(
+      ['Recruit on LINE — In Progress — demo+prod', 'Payroll — To Do — demo', 'One board — จะทำ', 'Org sync — Done'].join('\n'),
+    );
+    expect(salesList(rows)).not.toMatch(/A-\d|mr-1/);
+    expect(salesList([])).toBe('');
+  });
+
+  it('says unknown for a row whose status the board does not show', () => {
+    const rows = boardRows([feature({ id: 'ISF-99', epic: 'ISF-99', title: 'Later' })], new Map(), null);
+    expect(salesList(rows)).toBe('Later — unknown');
   });
 });
 
