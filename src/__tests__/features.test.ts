@@ -109,6 +109,13 @@ describe('Feature files', () => {
     expect(toFeature('/repo/.features/_template.md', FILE)).toBeNull();
   });
 
+  it('reads an optional `target`, a date or a milestone name', () => {
+    const target = (line: string) => toFeature('/x/mr-1.md', `---\ntitle: T\n${line}---\n`)?.target;
+    expect(target('target: 2026-12-15   # when it is due\n')).toBe('2026-12-15');
+    expect(target('target: v0.2\n')).toBe('v0.2');
+    expect(target('')).toBe('');
+  });
+
   it('remembers whether the file has an `mrs` key, which a no-MR repo leaves out', () => {
     const withKey = (line: string) => toFeature('/x/ISF-1.md', `---\ntitle: T\n${line}---\n`)?.hasMrsKey;
     expect(withKey('mrs: []\n')).toBe(true);

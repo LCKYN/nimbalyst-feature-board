@@ -16,6 +16,8 @@ export interface Feature {
    * the key out, so its presence says MR state decides "shipped", not the Epic.
    */
   hasMrsKey: boolean;
+  /** Optional `target:` — a date (`2026-12-15`) or a milestone name. For repos without Jira; with Jira the Epic's due date is the home. */
+  target: string;
   /** `## Goal`: its first paragraph on one line (the files wrap it mid-sentence), then the rest as written. */
   goal: string;
   /** The checkboxes under `## Acceptance criteria`. */
@@ -130,6 +132,7 @@ export function toFeature(path: string, content: string, readError?: string): Fe
     relates: list(fm?.relates),
     mrs: list(fm?.mrs),
     hasMrsKey: fm?.mrs !== undefined,
+    target: text(fm?.target),
     goal: firstParagraphOnOneLine(body.Goal ?? ''),
     criteria: [...(body['Acceptance criteria'] ?? '').matchAll(/^\s*- \[([ xX])\] (.+)$/gm)].map((m) => ({
       text: m[2].trim(),

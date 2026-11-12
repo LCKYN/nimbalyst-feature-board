@@ -26,6 +26,8 @@ export interface JiraEpic {
   /** Cards (Task or Bug) under the Epic that are not Done. */
   openCards: number;
   cardsInProgress: number;
+  /** The Epic's Jira due date (`2026-12-15`), empty when it has none or the cache was written without it. */
+  due: string;
 }
 
 export interface JiraCache {
@@ -38,7 +40,8 @@ export interface JiraCache {
  * The cache file's contents; throws with the reason when the text is not a
  * cache. Entries without a key are dropped. An entry without a status or a
  * card count makes the whole cache invalid: the rules forbid a partial write,
- * and a missing count read as 0 would pass for "no open card".
+ * and a missing count read as 0 would pass for "no open card". `due` is
+ * optional: Jira has none for most Epics, and older caches never carry it.
  */
 export function parseJiraCache(text: string): JiraCache {
   const raw = JSON.parse(text);
@@ -59,6 +62,7 @@ export function parseJiraCache(text: string): JiraCache {
         labels: Array.isArray(e.labels) ? e.labels.filter((l: unknown) => typeof l === 'string') : [],
         openCards: count(e, 'openCards'),
         cardsInProgress: count(e, 'cardsInProgress'),
+        due: typeof e.due === 'string' ? e.due : '',
       })),
   };
 }
@@ -186,6 +190,8 @@ export interface BoardRow {
   handSet: boolean;
   blocked: boolean;
   stalled: boolean;
+  /** When it is due: the file's `target` when it has one, else the Epic's due date. Empty when neither. */
+  target: string;
   /** What needs an answer from the user, and what cannot move on its own. */
   waiting: WaitItem[];
   stuck: WaitItem[];
@@ -282,6 +288,7 @@ export function boardRows(
       handSet,
       blocked,
       stalled,
+      target: feature?.target || epic?.due || '',
       waiting,
       stuck,
       mrStateUnknown,
@@ -328,6 +335,17 @@ export function matches(row: BoardRow, query: string): boolean {
     .toLowerCase();
   return query.toLowerCase().split(/\s+/).every((word) => text.includes(word));
 }
+
+/** `YYYY-MM-DD` on the local wall clock. Not `toISOString`, which is UTC and runs hours behind east of Greenwich. */
+export const localDate = (d: Date) =>
+  [d.getFullYear(), d.getMonth() + 1, d.getDate()].map((n) => String(n).padStart(2, '0')).join('-');
+
+/**
+ * A target that is a date (`YYYY-MM-DD`) before `today` (the local date), on a
+ * row that is not done or cancelled. A milestone name is never overdue.
+ */
+export const isOverdue = (row: BoardRow, today: string) =>
+  /^\d{4}-\d{2}-\d{2}$/.test(row.target) && row.target < today && row.status !== 'done' && row.status !== 'cancelled';
 
 /** A Jira read older than a day, or at a time `ago()` cannot tell, may no longer match Jira. */
 export function isStale(iso: string, now: number): boolean {

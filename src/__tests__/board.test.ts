@@ -3,10 +3,12 @@ import {
   ago,
   boardRows,
   epicUrl,
+  isOverdue,
   isStale,
   isWorktreeGitFile,
   jiraSite,
   loadBoard,
+  localDate,
   matches,
   parseJiraCache,
   readJiraCache,
@@ -27,6 +29,7 @@ const feature = (over: Partial<Feature> = {}): Feature => ({
   mrs: [],
   // As `toFeature` sets it: a file that lists MRs has the key.
   hasMrsKey: (over.mrs?.length ?? 0) > 0,
+  target: '',
   goal: '',
   criteria: [],
   relatedCode: '',
@@ -40,6 +43,7 @@ const epic = (over: Partial<JiraEpic> = {}): JiraEpic => ({
   labels: [],
   openCards: 0,
   cardsInProgress: 0,
+  due: '',
   ...over,
 });
 const task = (status: string): TaskFact => ({ id: status, title: status, status, tags: [], updatedAt: 0 });
@@ -168,6 +172,18 @@ describe('boardRows', () => {
     expect(rows({ 'RDHR-144': 'finished' })[1]).toMatchObject({ status: 'in_progress', handSet: false });
   });
 
+  it('takes the target from the Feature file when it has one, else the due date of the Epic', () => {
+    const target = (f: Partial<Feature>, e: Partial<JiraEpic>) =>
+      boardRows([feature(f)], new Map(), cache(epic(e)))[0].target;
+    expect(target({ target: '2026-12-15' }, { due: '2026-11-30' })).toBe('2026-12-15');
+    expect(target({}, { due: '2026-11-30' })).toBe('2026-11-30');
+    expect(target({ target: 'v0.2' }, {})).toBe('v0.2');
+    expect(target({}, {})).toBe('');
+    // An Epic without a file, and a row with neither.
+    expect(boardRows([], new Map(), cache(epic({ due: '2026-11-30' })))[0].target).toBe('2026-11-30');
+    expect(boardRows([], new Map([['mr-1', [task('to-do')]]]), null)[0].target).toBe('');
+  });
+
   it('gives Tasks whose featureId matches no Feature file or Epic a row of their own', () => {
     const rows = boardRows([], new Map([['mr-1', [task('to-do')]]]), null);
     expect(rows).toHaveLength(1);
@@ -224,8 +240,17 @@ describe('parseJiraCache', () => {
       ),
     ).toEqual({
       fetchedAt: 't',
-      epics: [{ key: 'A-1', title: 'A-1', status: 'Done', labels: [], openCards: 0, cardsInProgress: 0 }],
+      epics: [{ key: 'A-1', title: 'A-1', status: 'Done', labels: [], openCards: 0, cardsInProgress: 0, due: '' }],
     });
+  });
+
+  it('reads an Epic\'s due date when the cache has one, and accepts a cache without', () => {
+    const due = (field: string) =>
+      parseJiraCache(`{"epics":[{"key":"A-1","status":"To Do","openCards":0,"cardsInProgress":0${field}}]}`).epics[0].due;
+    expect(due('')).toBe('');
+    expect(due(',"due":"2026-12-15"')).toBe('2026-12-15');
+    expect(due(',"due":null')).toBe('');
+    expect(due(',"due":20261215')).toBe('');
   });
 
   it('rejects a partial cache: an entry without a status or a card count is not "no open card"', () => {
@@ -354,6 +379,33 @@ describe('jiraSite and epicUrl', () => {
     expect(epicUrl(site, 'mr-1')).toBe('');
     expect(epicUrl(site, 'RDHR-144/../../x')).toBe('');
     expect(epicUrl(site, undefined)).toBe('');
+  });
+});
+
+describe('isOverdue', () => {
+  const row = (target: string, status = 'In Progress', labels: string[] = []) =>
+    boardRows([feature({ target })], new Map(), cache(epic({ status, labels })))[0];
+
+  it('is true for a date before today on a row that is still open', () => {
+    expect(isOverdue(row('2026-11-05'), '2026-11-12')).toBe(true);
+    expect(isOverdue(row('2026-11-12'), '2026-11-12')).toBe(false);
+    expect(isOverdue(row('2026-12-15'), '2026-11-12')).toBe(false);
+  });
+
+  it('is false for a closed row, and for a target that is not a date', () => {
+    expect(isOverdue(row('2026-11-05', 'Done'), '2026-11-12')).toBe(false);
+    expect(isOverdue(row('2026-11-05', 'To Do', ['rejected']), '2026-11-12')).toBe(false);
+    expect(isOverdue(row('v0.2'), '2026-11-12')).toBe(false);
+    expect(isOverdue(row('2026-11-5'), '2026-11-12')).toBe(false);
+    expect(isOverdue(row(''), '2026-11-12')).toBe(false);
+  });
+});
+
+describe('localDate', () => {
+  it('is the date on the wall clock, not the UTC one', () => {
+    // Half past midnight local time is still "yesterday" in UTC east of Greenwich.
+    expect(localDate(new Date(2026, 10, 5, 0, 30))).toBe('2026-11-05');
+    expect(localDate(new Date(2026, 0, 31, 23, 59))).toBe('2026-01-31');
   });
 });
 

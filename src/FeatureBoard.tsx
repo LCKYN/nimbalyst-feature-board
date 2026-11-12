@@ -4,8 +4,10 @@ import {
   ago,
   boardRows,
   epicUrl,
+  isOverdue,
   isStale,
   loadBoard,
+  localDate,
   matches,
   touchesFeatures,
   type Board,
@@ -109,9 +111,11 @@ export function FeatureBoard({ host }: PanelHostProps) {
   // A filter searches the closed rows too: "prod" must find what already shipped.
   const shown = rows?.filter((r) => (filtering ? matches(r, query) : showClosed || !CLOSED.includes(r.status)));
   const hasTasks = shown?.some((r) => r.progress.total > 0) ?? false;
+  const hasTarget = shown?.some((r) => r.target) ?? false;
   const jira = loaded?.jira ?? null;
   // Read on every render, and every load renders, so the age is as fresh as the rows.
   const now = Date.now();
+  const today = localDate(new Date(now));
   const jiraStale = jira !== null && isStale(jira.fetchedAt, now);
   // A Feature names an Epic but nothing was ever read from Jira for this workspace.
   const jiraNeverSynced = !jira && loaded?.features.some((f) => f.epic);
@@ -207,6 +211,7 @@ export function FeatureBoard({ host }: PanelHostProps) {
                   <th className="px-3 py-2 font-medium">Feature</th>
                   <th className="px-3 py-2 font-medium">ID</th>
                   <th className="px-3 py-2 font-medium">Status</th>
+                  {hasTarget && <th className="px-3 py-2 font-medium">Target</th>}
                   {jira && <th className="px-3 py-2 font-medium">Jira</th>}
                   {jira && <th className="px-3 py-2 font-medium">Labels</th>}
                   {hasTasks && <th className="px-3 py-2 text-right font-medium">Tasks</th>}
@@ -221,6 +226,8 @@ export function FeatureBoard({ host }: PanelHostProps) {
                     row={row}
                     hasJira={Boolean(jira)}
                     hasTasks={hasTasks}
+                    hasTarget={hasTarget}
+                    overdue={isOverdue(row, today)}
                     jiraUrl={epicUrl(loaded!.jiraSite, row.epic?.key)}
                     onOpen={(path) => host.openFile(path)}
                     onSetStatus={setStatus}
@@ -280,6 +287,8 @@ function FeatureRow({
   row,
   hasJira,
   hasTasks,
+  hasTarget,
+  overdue,
   jiraUrl,
   onOpen,
   onSetStatus,
@@ -288,6 +297,8 @@ function FeatureRow({
   row: BoardRow;
   hasJira: boolean;
   hasTasks: boolean;
+  hasTarget: boolean;
+  overdue: boolean;
   /** The Epic's page in Jira, empty when there is no Epic or the site is not known. */
   jiraUrl: string;
   onOpen: (path: string) => void;
@@ -399,6 +410,12 @@ function FeatureRow({
           <div className="mt-0.5 text-xs text-nim-muted">MR state not read</div>
         )}
       </td>
+      {hasTarget && (
+        <td className={`feature-row-target whitespace-nowrap px-3 py-2 ${overdue ? 'text-nim-error' : 'text-nim-muted'}`}>
+          {row.target}
+          {overdue && ' overdue'}
+        </td>
+      )}
       {hasJira && (
         <td className="feature-row-jira whitespace-nowrap px-3 py-2 text-nim-muted">
           {!epic && feature?.epic && `${feature.epic} not in cache`}
