@@ -23,6 +23,10 @@ const feature = (over: Partial<Feature> = {}): Feature => ({
   mrs: [],
   // As `toFeature` sets it: a file that lists MRs has the key.
   hasMrsKey: (over.mrs?.length ?? 0) > 0,
+  goal: '',
+  criteria: [],
+  relatedCode: '',
+  decisions: '',
   ...over,
 });
 const epic = (over: Partial<JiraEpic> = {}): JiraEpic => ({
@@ -80,6 +84,7 @@ describe('boardRows', () => {
     const [row] = boardRows([feature()], tasks, cache(epic({ status: 'Done' })));
     expect(row.status).toBe('in_progress');
     expect(row.progress).toMatchObject({ total: 2, done: 1 });
+    expect(row.tasks.map((t) => t.status)).toEqual(['done', 'in-review']);
   });
 
   it('says unknown for a Feature that lists MRs when nothing open explains its status', () => {

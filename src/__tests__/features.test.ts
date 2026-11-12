@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { groupTasks, parseFrontmatter, toFeature } from '../features';
+import { groupTasks, parseFrontmatter, sections, toFeature } from '../features';
 
 const FILE = `---
 id: issue-12
@@ -13,6 +13,66 @@ source: new
 ## Goal
 relates: not-frontmatter
 `;
+
+// The shape of a real backfilled file: a Goal wrapped mid-sentence, then "Built" and "Waits on" lines.
+const WITH_BODY = `---
+id: issue-12
+title: Pay by QR
+---
+intro before the first heading
+
+## Goal
+Customers pay an invoice by scanning a QR code, without typing a card or
+an account number.
+
+Built: the QR on the invoice page.
+Waits on: bank sandbox access.
+
+## Acceptance criteria
+- [x] The QR opens the bank app
+- [ ] A paid invoice is marked within a minute
+  - [X] also when the page was closed
+- not a checkbox
+
+## Related code
+- [docs/features/qr.md](../docs/features/qr.md)
+- \`backend/app/pay/qr_*.py\`
+
+## Decisions
+- 2026-11-12: one QR per invoice.
+`;
+
+describe('Feature file body', () => {
+  it('splits the body into its ## sections and leaves the frontmatter out', () => {
+    expect(Object.keys(sections(WITH_BODY))).toEqual(['Goal', 'Acceptance criteria', 'Related code', 'Decisions']);
+    expect(sections(WITH_BODY).Decisions).toBe('- 2026-11-12: one QR per invoice.');
+    expect(sections('no heading at all')).toEqual({});
+  });
+
+  it('keeps the Goal with its first paragraph on one line, and the rest as written', () => {
+    expect(toFeature('/x/issue-12.md', WITH_BODY)?.goal).toBe(
+      'Customers pay an invoice by scanning a QR code, without typing a card or an account number.\n\n' +
+        'Built: the QR on the invoice page.\nWaits on: bank sandbox access.',
+    );
+    // A body line that looks like frontmatter is body.
+    expect(toFeature('/x/issue-12.md', FILE)).toMatchObject({ goal: 'relates: not-frontmatter', relates: [] });
+  });
+
+  it('reads the acceptance criteria as checkboxes, and the other sections as text', () => {
+    expect(toFeature('/x/issue-12.md', WITH_BODY)).toMatchObject({
+      criteria: [
+        { text: 'The QR opens the bank app', done: true },
+        { text: 'A paid invoice is marked within a minute', done: false },
+        { text: 'also when the page was closed', done: true },
+      ],
+      relatedCode: '- [docs/features/qr.md](../docs/features/qr.md)\n- `backend/app/pay/qr_*.py`',
+      decisions: '- 2026-11-12: one QR per invoice.',
+    });
+    // A backfilled file: the section is there and empty.
+    const empty = toFeature('/x/RDHR-1.md', '---\ntitle: T\n---\n## Goal\nG\n\n## Acceptance criteria\n\n## Related code\n');
+    expect(empty).toMatchObject({ goal: 'G', criteria: [], relatedCode: '', decisions: '' });
+  });
+});
 
 describe('Feature files', () => {
   it('reads scalars, inline lists and block lists, and stops at the closing fence', () => {

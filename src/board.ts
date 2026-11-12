@@ -137,6 +137,8 @@ export interface BoardRow {
   feature?: Feature;
   /** Absent when the Feature has no Epic, or the Epic is not in the cache. */
   epic?: JiraEpic;
+  /** The Tasks that name this row's id. */
+  tasks: TaskFact[];
   progress: TaskProgress;
   status: FeatureStatus;
   blocked: boolean;
@@ -199,7 +201,7 @@ export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, c
     const explained = status === 'cancelled' || progress.total > progress.done || hasOpenCard || inProgressInJira;
     const unknown =
       feature?.epic && !epic ? 'Jira not read' : mrStateUnknown && !explained ? 'MR state not read' : undefined;
-    return { id, title, feature, epic, progress, status, blocked, mrStateUnknown, unknown };
+    return { id, title, feature, epic, tasks: own, progress, status, blocked, mrStateUnknown, unknown };
   };
 
   const rows = features.map((feature) => {

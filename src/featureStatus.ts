@@ -160,6 +160,16 @@ export function taskProgress(tasks: TaskFact[]): TaskProgress {
   return { total, done, inReview, inProgress, todo, other: total - done - inReview - inProgress - todo };
 }
 
+/** The order work moves in. A status that is not listed sorts after `to-do`: it is open, and nobody knows how far. */
+const TASK_ORDER = ['in-progress', 'in-review', 'to-do', '', 'done', 'wont-do'];
+
+/** A Feature's Tasks for reading: the open blocked ones first, then by status in the order work moves. */
+export function sortTasks(tasks: TaskFact[]): TaskFact[] {
+  const rank = (t: TaskFact) =>
+    isOpen(t) && t.tags.includes('blocked') ? -1 : TASK_ORDER.indexOf(TASK_ORDER.includes(t.status) ? t.status : '');
+  return [...tasks].sort((a, b) => rank(a) - rank(b));
+}
+
 /** Task statuses that mean the Task was picked up at some point. */
 const RAN = new Set(['in-progress', 'in-review', 'done']);
 

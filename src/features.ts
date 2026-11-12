@@ -16,11 +16,21 @@ export interface Feature {
    * the key out, so its presence says MR state decides "shipped", not the Epic.
    */
   hasMrsKey: boolean;
+  /** `## Goal`: its first paragraph on one line (the files wrap it mid-sentence), then the rest as written. */
+  goal: string;
+  /** The checkboxes under `## Acceptance criteria`. */
+  criteria: { text: string; done: boolean }[];
+  /** `## Related code` and `## Decisions`, as written. */
+  relatedCode: string;
+  decisions: string;
   /** Why the file could not be read as a Feature (no frontmatter block, a failed read); the fields above are then empty. */
   unreadable?: string;
 }
 
 type Frontmatter = Record<string, string | string[]>;
+
+/** The frontmatter block at the top of a file. Both fences may carry trailing blanks. */
+const FRONTMATTER = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/;
 
 /**
  * A scalar the way YAML reads it: a quoted one up to its closing quote with
@@ -46,7 +56,7 @@ const scalar = (s: string) => {
  * package if Feature files ever grow nested values or multi-line strings.
  */
 export function parseFrontmatter(text: string): Frontmatter | null {
-  const block = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text);
+  const block = FRONTMATTER.exec(text);
   if (!block) return null;
 
   const out: Frontmatter = {};
@@ -75,6 +85,26 @@ export function parseFrontmatter(text: string): Frontmatter | null {
   return out;
 }
 
+/**
+ * The `## ` sections of a Feature file by heading, each as written. The
+ * frontmatter block and any text before the first heading are left out.
+ */
+export function sections(content: string): Record<string, string> {
+  const parts = content.replace(FRONTMATTER, '').split(/^## /m).slice(1);
+  return Object.fromEntries(
+    parts.map((part) => {
+      const [heading, ...body] = part.split(/\r?\n/);
+      return [heading.trim(), body.join('\n').trim()];
+    }),
+  );
+}
+
+/** A section with its first paragraph joined into one line. */
+const firstParagraphOnOneLine = (section: string) => {
+  const [first, ...rest] = section.split(/\n[ \t]*\n/);
+  return [first.replace(/\s*\n\s*/g, ' '), ...rest].join('\n\n');
+};
+
 const text = (v: string | string[] | undefined) => (typeof v === 'string' ? v : '');
 const list = (v: string | string[] | undefined) => (Array.isArray(v) ? v : v ? [v] : []);
 
@@ -88,6 +118,7 @@ export function toFeature(path: string, content: string, readError?: string): Fe
   const name = path.split(/[\\/]/).pop() ?? '';
   if (!name.endsWith('.md') || name.startsWith('_') || name === 'INDEX.md') return null;
   const fm = readError ? null : parseFrontmatter(content);
+  const body = sections(content);
   const id = name.slice(0, -3);
   return {
     id,
@@ -99,6 +130,13 @@ export function toFeature(path: string, content: string, readError?: string): Fe
     relates: list(fm?.relates),
     mrs: list(fm?.mrs),
     hasMrsKey: fm?.mrs !== undefined,
+    goal: firstParagraphOnOneLine(body.Goal ?? ''),
+    criteria: [...(body['Acceptance criteria'] ?? '').matchAll(/^\s*- \[([ xX])\] (.+)$/gm)].map((m) => ({
+      text: m[2].trim(),
+      done: m[1] !== ' ',
+    })),
+    relatedCode: body['Related code'] ?? '',
+    decisions: body.Decisions ?? '',
     unreadable: readError ?? (fm ? undefined : 'no frontmatter block'),
   };
 }

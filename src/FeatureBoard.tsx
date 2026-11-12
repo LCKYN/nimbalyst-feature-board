@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { PanelHostProps } from '@nimbalyst/extension-sdk';
 import { ago, boardRows, isStale, loadBoard, type Board, type BoardRow } from './board';
-import { STATUS_LABEL, type FeatureStatus } from './featureStatus';
+import { sortTasks, STATUS_LABEL, type FeatureStatus } from './featureStatus';
 
 const CLOSED: FeatureStatus[] = ['done', 'cancelled'];
 /** What the checkbox reveals, in the words the Status column uses. */
@@ -213,6 +213,7 @@ function FeatureRow({
         ) : (
           <span className="feature-row-title text-nim-muted">{row.title}</span>
         )}
+        <RowDetail row={row} />
         {meta.length > 0 && <div className="feature-row-meta mt-0.5 text-xs text-nim-muted">{meta.join(' · ')}</div>}
         {feature?.unreadable && (
           <div className="feature-row-unreadable mt-0.5 text-xs text-nim-error">
@@ -285,5 +286,74 @@ function FeatureRow({
       )}
       {hasTasks && <td className="feature-row-open px-3 py-2 text-nim-muted">{openTasks.join(' · ')}</td>}
     </tr>
+  );
+}
+
+/**
+ * What the Feature file says and what its Tasks are, under the title: the Goal's
+ * first paragraph, and on unfolding the rest of the Goal, the acceptance
+ * criteria, Related code, Decisions and the Tasks. A native <details>, so it
+ * needs no state and works from the keyboard. The text is shown as written.
+ *
+ * ponytail: the body is only as wide as the Feature column, and Markdown is
+ * not rendered (links are text). Move it to a full-width row under the Feature
+ * if long criteria feel cramped.
+ */
+function RowDetail({ row }: { row: BoardRow }) {
+  const feature = row.feature?.unreadable ? undefined : row.feature;
+  const { tasks, progress } = row;
+  // An Epic with no file and no Tasks has nothing to unfold.
+  if (!feature && tasks.length === 0) return null;
+
+  const taskCount = `Tasks ${progress.done}/${progress.total}`;
+  const [summary, ...restOfGoal] = (feature?.goal ?? '').split('\n\n');
+  const criteria = feature?.criteria ?? [];
+  const heading = 'mt-2 font-medium text-nim';
+  return (
+    <details
+      className="feature-row-detail group mt-0.5 cursor-default text-xs text-nim-muted select-text"
+      // The row's click opens the file; a click in here unfolds the detail or selects its text.
+      onClick={(e) => e.stopPropagation()}
+    >
+      <summary className="flex cursor-pointer list-none gap-1">
+        <span className="shrink-0 group-open:[transform:rotate(90deg)]">▸</span>
+        <span className="line-clamp-1 group-open:line-clamp-none">
+          {summary || (feature ? 'No Goal written' : taskCount)}
+        </span>
+      </summary>
+      <div className="ml-3.5 whitespace-pre-wrap pb-1">
+        {restOfGoal.length > 0 && <div className="feature-row-goal mt-1">{restOfGoal.join('\n\n')}</div>}
+        {feature && (
+          <>
+            <div className={heading}>
+              Acceptance criteria{' '}
+              {criteria.length > 0 ? `${criteria.filter((c) => c.done).length}/${criteria.length}` : '· none written'}
+            </div>
+            {criteria.map((c, i) => (
+              <div key={i} className="feature-row-criterion flex gap-1.5">
+                <span className="shrink-0">{c.done ? '☑' : '☐'}</span>
+                <span>{c.text}</span>
+              </div>
+            ))}
+            {feature.relatedCode && <div className={heading}>Related code</div>}
+            {feature.relatedCode}
+            {feature.decisions && <div className={heading}>Decisions</div>}
+            {feature.decisions}
+          </>
+        )}
+        <div className={heading}>{tasks.length > 0 ? taskCount : 'Tasks · none'}</div>
+        {sortTasks(tasks).map((task) => (
+          <div key={task.id} className="feature-row-task flex gap-2">
+            <span className="w-20 shrink-0">{task.status.replace(/-/g, ' ')}</span>
+            <span>
+              {task.title}
+              {task.tags.includes('blocked') && task.status !== 'done' && task.status !== 'wont-do' && (
+                <span className="text-nim-error"> blocked</span>
+              )}
+            </span>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }

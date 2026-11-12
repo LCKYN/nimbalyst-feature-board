@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   featureStatus,
+  sortTasks,
   taskProgress,
   waitItems,
   type FeatureFacts,
@@ -181,5 +182,21 @@ describe('taskProgress', () => {
 
   it('counts a status it does not know as open, apart from to do', () => {
     expect(taskProgress([task({ status: 'completed' }), task({ status: 'to-do' })])).toMatchObject({ total: 2, todo: 1, other: 1 });
+  });
+});
+
+describe('sortTasks', () => {
+  it('puts open blocked Tasks first, then follows the order work moves in', () => {
+    const tasks = [
+      task({ id: 'done', status: 'done', tags: ['blocked'] }),
+      task({ id: 'todo', status: 'to-do' }),
+      task({ id: 'odd', status: 'completed' }),
+      task({ id: 'review', status: 'in-review' }),
+      task({ id: 'wont', status: 'wont-do' }),
+      task({ id: 'stuck', status: 'to-do', tags: ['blocked'] }),
+      task({ id: 'doing', status: 'in-progress' }),
+    ];
+    expect(sortTasks(tasks).map((t) => t.id)).toEqual(['stuck', 'doing', 'review', 'todo', 'odd', 'done', 'wont']);
+    expect(tasks[0].id).toBe('done');
   });
 });
