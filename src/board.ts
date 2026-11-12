@@ -89,6 +89,20 @@ export async function loadJiraCache(workspacePath: string): Promise<JiraRead> {
   return read;
 }
 
+/**
+ * The Jira site (`https://<site>`) from the `Jira project: KEY (<board URL>)`
+ * line of a repo's CLAUDE.md, or empty when the line has no https URL.
+ */
+export const jiraSite = (claudeMd: string) => /^Jira project:.*\((https:\/\/[^/)\s]+)/m.exec(claudeMd)?.[1] ?? '';
+
+/**
+ * The Epic's page in Jira, or empty when the site is not known or the key does
+ * not look like one. Both parts come from files and the link opens in the
+ * system browser, so neither is passed on unchecked.
+ */
+export const epicUrl = (site: string, key: string | undefined) =>
+  site && key && /^[A-Z][A-Z0-9]*-\d+$/.test(key) ? `${site}/browse/${key}` : '';
+
 /** True for the host's `file-changed-on-disk` event (`{ path }`) when the file is inside a `.features/` folder. */
 export const touchesFeatures = (event: unknown) => {
   const path = (event as { path?: unknown } | undefined)?.path;
@@ -106,6 +120,8 @@ export interface Board {
   jira: JiraCache | null;
   /** Why a `jira-cache.json` is there but could not be read. */
   jiraError: string | undefined;
+  /** `https://<site>` of the repo's Jira, empty when no CLAUDE.md names it. */
+  jiraSite: string;
   /** A `.features/` listing came back at the host's cap, so Feature files may be missing. */
   truncated: boolean;
   /** No cache was found and the workspace is a linked worktree: the cache and the Tasks are with the main checkout. */
@@ -122,10 +138,11 @@ export interface Board {
  * repos are ever attached to one workspace.
  */
 export async function loadBoard(folders: string[]): Promise<Board> {
-  const [lists, tasks, reads] = await Promise.all([
+  const [lists, tasks, reads, claudeMds] = await Promise.all([
     Promise.all(folders.map(loadFeatures)),
     loadTasks(folders[0]),
     Promise.all(folders.map(loadJiraCache)),
+    Promise.all(folders.map((folder) => window.electronAPI.invoke('read-file-content', `${folder}/CLAUDE.md`))),
   ]);
   const sessions = await loadSessions(folders[0], tasks);
   const features = lists.flatMap((l) => l.features);
@@ -146,6 +163,8 @@ export async function loadBoard(folders: string[]): Promise<Board> {
     sessions,
     jira,
     jiraError,
+    // ponytail: one site for the whole workspace, the first one found.
+    jiraSite: claudeMds.map((md) => (md?.success ? jiraSite(md.content) : '')).find(Boolean) ?? '',
     truncated: lists.some((l) => l.truncated),
     worktree: Boolean(git?.success && isWorktreeGitFile(git.content)),
   };

@@ -1,6 +1,16 @@
 import { useEffect, useState } from 'react';
 import type { PanelHostProps } from '@nimbalyst/extension-sdk';
-import { ago, boardRows, isStale, loadBoard, matches, touchesFeatures, type Board, type BoardRow } from './board';
+import {
+  ago,
+  boardRows,
+  epicUrl,
+  isStale,
+  loadBoard,
+  matches,
+  touchesFeatures,
+  type Board,
+  type BoardRow,
+} from './board';
 import { sortTasks, STATUS_LABEL, type FeatureStatus, type WaitItem } from './featureStatus';
 
 const CLOSED: FeatureStatus[] = ['done', 'cancelled'];
@@ -211,6 +221,7 @@ export function FeatureBoard({ host }: PanelHostProps) {
                     row={row}
                     hasJira={Boolean(jira)}
                     hasTasks={hasTasks}
+                    jiraUrl={epicUrl(loaded!.jiraSite, row.epic?.key)}
                     onOpen={(path) => host.openFile(path)}
                     onSetStatus={setStatus}
                     onFilter={setQuery}
@@ -269,6 +280,7 @@ function FeatureRow({
   row,
   hasJira,
   hasTasks,
+  jiraUrl,
   onOpen,
   onSetStatus,
   onFilter,
@@ -276,6 +288,8 @@ function FeatureRow({
   row: BoardRow;
   hasJira: boolean;
   hasTasks: boolean;
+  /** The Epic's page in Jira, empty when there is no Epic or the site is not known. */
+  jiraUrl: string;
   onOpen: (path: string) => void;
   /** An empty status clears the hand-set one. */
   onSetStatus: (id: string, status: string) => void;
@@ -329,7 +343,24 @@ function FeatureRow({
           </div>
         )}
       </td>
-      <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-nim-muted">{row.id}</td>
+      <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-nim-muted">
+        {row.id}
+        {jiraUrl && (
+          // Its own button, so the id beside it can still be selected and copied.
+          <button
+            type="button"
+            className="feature-row-jira-link ml-1 hover:text-nim"
+            title={`Open ${epic?.key} in Jira`}
+            aria-label={`Open ${epic?.key} in Jira`}
+            onClick={(e) => {
+              e.stopPropagation();
+              void window.electronAPI.invoke('open-external', jiraUrl);
+            }}
+          >
+            ↗
+          </button>
+        )}
+      </td>
       <td className="feature-row-status whitespace-nowrap px-3 py-2">
         <span className="flex items-center gap-1.5">
           {row.unknown ? (

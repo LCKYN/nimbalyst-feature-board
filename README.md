@@ -15,6 +15,8 @@ A [Nimbalyst](https://github.com/nimbalyst/nimbalyst) extension that adds a full
 
 The filter box looks for every word you type in a row's title, id, kind, labels, Jira status and shown status, and it searches the closed rows too: `prod` lists what can be sold, `demo` what can be shown. A label on a row puts itself in the box.
 
+The ↗ beside an id opens the Epic in Jira. The site comes from the repo's `CLAUDE.md`, from the line `Jira project: KEY (https://<site>/...)`; a line without the URL gives no link.
+
 ## Staying current
 
 The board reloads when a Task changes, when a file in `.features/` changes, when the window gets the focus back, and from its Refresh button. A rewritten Jira cache is seen through the file event only while it is not in `.gitignore` (the host's watcher skips gitignored changes); after that, focus and Refresh pick it up. The board does not listen for session changes yet, so a session that starts to wait for an answer shows on the next of those reloads.
@@ -23,7 +25,7 @@ The board reloads when a Task changes, when a file in `.features/` changes, when
 
 Tested on Nimbalyst 0.82.0 or later. An older host can answer the tracker listing for another project; the board drops those items, so it shows no Tasks there, not wrong ones.
 
-The SDK has no documented way to list a folder, the tracker items or the sessions, so the board calls undocumented host IPC channels through `window.electronAPI.invoke`: `get-folder-contents`, `read-file-content`, `document-service:tracker-items-list`, `sessions:list` and `ai-session-state:get-state`. It opens a session with the host's `open-ai-session` window event, and listens to the host events `document-service:tracker-items-changed` and `file-changed-on-disk` through `host.onWorkspaceEvent`. A host that renames or reshapes one of them breaks the board.
+The SDK has no documented way to list a folder, the tracker items or the sessions, so the board calls undocumented host IPC channels through `window.electronAPI.invoke`: `get-folder-contents`, `read-file-content`, `document-service:tracker-items-list`, `sessions:list`, `ai-session-state:get-state` and `open-external`. It opens a session with the host's `open-ai-session` window event, and listens to the host events `document-service:tracker-items-changed` and `file-changed-on-disk` through `host.onWorkspaceEvent`. A host that renames or reshapes one of them breaks the board.
 
 ## Build and install
 

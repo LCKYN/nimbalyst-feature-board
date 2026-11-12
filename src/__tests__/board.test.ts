@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ago,
   boardRows,
+  epicUrl,
   isStale,
   isWorktreeGitFile,
+  jiraSite,
   loadBoard,
   matches,
   parseJiraCache,
@@ -332,6 +334,29 @@ describe('matches', () => {
   });
 });
 
+describe('jiraSite and epicUrl', () => {
+  const CLAUDE_MD = '@AGENTS.md\n\nJira project: RDHR (https://example.atlassian.net/jira/software/projects/RDHR/boards/1)\n\nFeatures: .features/\n';
+
+  it('takes the Jira site from the `Jira project:` line of CLAUDE.md, when the line has a URL', () => {
+    expect(jiraSite(CLAUDE_MD)).toBe('https://example.atlassian.net');
+    expect(jiraSite('# repo\n\nJira project: RDDSI\n')).toBe('');
+    expect(jiraSite('See (https://example.atlassian.net/x) for the board\n')).toBe('');
+    // The text comes from a file and ends in the system browser: https only.
+    expect(jiraSite('Jira project: X (http://example.atlassian.net/x)')).toBe('');
+    expect(jiraSite('Jira project: X (javascript:alert(1))')).toBe('');
+    expect(jiraSite('')).toBe('');
+  });
+
+  it('builds the Epic link only from a known site and a key that looks like one', () => {
+    const site = 'https://example.atlassian.net';
+    expect(epicUrl(site, 'RDHR-144')).toBe('https://example.atlassian.net/browse/RDHR-144');
+    expect(epicUrl('', 'RDHR-144')).toBe('');
+    expect(epicUrl(site, 'mr-1')).toBe('');
+    expect(epicUrl(site, 'RDHR-144/../../x')).toBe('');
+    expect(epicUrl(site, undefined)).toBe('');
+  });
+});
+
 describe('touchesFeatures', () => {
   it('is true for a file event inside a .features/ folder, on either kind of path', () => {
     expect(touchesFeatures({ path: '/ws/.features/RDHR-144.md' })).toBe(true);
@@ -434,6 +459,13 @@ describe('loadBoard', () => {
       { id: 'runs', title: 'Session runs', taskId: 't2', status: 'running', hasPendingPrompt: false, updatedAt: 7 },
       { id: 'failed', title: 'Session failed', taskId: 't2', status: 'error', hasPendingPrompt: false, updatedAt: 7 },
     ]);
+  });
+
+  it('finds the Jira site in the CLAUDE.md of a workspace folder', async () => {
+    host({}, { '/b/CLAUDE.md': 'Jira project: RDHR (https://example.atlassian.net/jira/software/projects/RDHR)\n' });
+    expect((await loadBoard(['/a', '/b'])).jiraSite).toBe('https://example.atlassian.net');
+    host({}, { '/a/CLAUDE.md': 'Jira project: RDDSI\n' });
+    expect((await loadBoard(['/a'])).jiraSite).toBe('');
   });
 
   it('says when a folder listing came back at the cap of 200 entries', async () => {
