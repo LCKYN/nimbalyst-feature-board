@@ -44,7 +44,7 @@ export function parseJiraCache(text: string): JiraCache {
       .map((e: any): JiraEpic => ({
         key: e.key,
         title: typeof e.title === 'string' ? e.title : e.key,
-        status: need(e, 'status', 'string').trim(),
+        status: need(e, 'status', 'string'),
         labels: Array.isArray(e.labels) ? e.labels.filter((l: unknown) => typeof l === 'string') : [],
         openCards: count(e, 'openCards'),
         cardsInProgress: count(e, 'cardsInProgress'),
@@ -133,7 +133,6 @@ export async function loadBoard(folders: string[]): Promise<Board> {
 export interface BoardRow {
   id: string;
   title: string;
-  kind: string;
   /** Absent for an Epic, or for Tasks, with no Feature file in this checkout. */
   feature?: Feature;
   /** Absent when the Feature has no Epic, or the Epic is not in the cache. */
@@ -165,12 +164,17 @@ const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id, 
  * ponytail: sessions, worktrees and MR state are not read yet, so a row is
  * never `awaiting_decision`, `consulting` or `started`, and the `stalled` flag
  * is left out. Pass those facts in here once the board gathers them.
+ *
+ * ponytail: a status set by hand on the board ("The user may set a status by
+ * hand" in the rules) is not built, so `cancelled` has one source, the
+ * `rejected` label. Keep the override in `host.storage`, apply it after
+ * `featureStatus()` and mark the row as hand-set.
  */
 export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, cache: JiraCache | null): BoardRow[] {
   const epics = new Map((cache?.epics ?? []).map((e) => [e.key, e]));
   const withFile = new Set<string>();
 
-  const row = (id: string, title: string, kind: string, feature?: Feature, epic?: JiraEpic): BoardRow => {
+  const row = (id: string, title: string, feature?: Feature, epic?: JiraEpic): BoardRow => {
     const own = tasks.get(id) ?? [];
     const progress = taskProgress(own);
     const mrStateUnknown = (feature?.mrs.length ?? 0) > 0;
@@ -179,6 +183,7 @@ export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, c
     const inProgressInJira = epic ? epic.cardsInProgress > 0 || jiraStatus === 'in progress' : undefined;
     const { status, blocked } = featureStatus({
       featureId: id,
+      // `rejected` is one of the fixed Jira labels; "Labels" in `~/.claude/card-rules.md` owns the name.
       cancelled: epic?.labels.includes('rejected'),
       hasOpenCard,
       inProgressInJira,
@@ -192,22 +197,22 @@ export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, c
     const explained = status === 'cancelled' || progress.total > progress.done || hasOpenCard || inProgressInJira;
     const unknown =
       feature?.epic && !epic ? 'Jira not read' : mrStateUnknown && !explained ? 'MR state not read' : undefined;
-    return { id, title, kind, feature, epic, progress, status, blocked, mrStateUnknown, unknown };
+    return { id, title, feature, epic, progress, status, blocked, mrStateUnknown, unknown };
   };
 
   const rows = features.map((feature) => {
     // In a Jira repo the file name is the Epic key; `epic:` only finds the Epic of a draft-* file.
     const epic = epics.get(feature.id) ?? epics.get(feature.epic);
     if (epic) withFile.add(epic.key);
-    return row(feature.id, feature.title, feature.kind, feature, epic);
+    return row(feature.id, feature.title, feature, epic);
   });
   for (const epic of epics.values()) {
-    if (!withFile.has(epic.key)) rows.push(row(epic.key, epic.title, '', undefined, epic));
+    if (!withFile.has(epic.key)) rows.push(row(epic.key, epic.title, undefined, epic));
   }
   // Tasks that name no row above (a renamed file, a file on another branch) must not vanish.
   const placed = new Set(rows.map((r) => r.id));
   for (const id of tasks.keys()) {
-    if (!placed.has(id)) rows.push(row(id, id, ''));
+    if (!placed.has(id)) rows.push(row(id, id));
   }
   return rows.sort(byId);
 }

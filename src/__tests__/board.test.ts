@@ -21,7 +21,6 @@ const feature = (over: Partial<Feature> = {}): Feature => ({
   branch: '',
   relates: [],
   mrs: [],
-  source: 'backfill',
   ...over,
 });
 const epic = (over: Partial<JiraEpic> = {}): JiraEpic => ({

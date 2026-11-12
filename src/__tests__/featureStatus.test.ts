@@ -73,7 +73,7 @@ describe('featureStatus', () => {
     expect(status({ mrs: [mr({ state: 'closed' }), mr({ id: '346', state: 'merged' })] })).toBe('todo');
   });
 
-  it('is done only when every MR merged and no card or Task is open', () => {
+  it('is done when it shipped (every MR merged, or without MRs a Done Epic) and no card or Task is open', () => {
     const merged = [mr({ state: 'merged' }), mr({ id: '346', state: 'merged' })];
     expect(status({ mrs: merged })).toBe('done');
     expect(status({ mrs: merged, hasOpenCard: true })).toBe('todo');
@@ -81,7 +81,6 @@ describe('featureStatus', () => {
     // Without MRs the Epic decides; with MRs a Done Epic does not override an open one.
     expect(status({ epicDone: true })).toBe('done');
     expect(status({ epicDone: true, mrs: [mr()] })).toBe('todo');
-    expect(status({ inProgressInJira: true })).toBe('in_progress');
     expect(status({ mrs: [merged[0], mr({ id: '346' })] })).toBe('todo');
     // A Task marked done does not finish a Feature that has no MR.
     expect(status({ tasks: [task({ status: 'done' })] })).toBe('in_progress');
@@ -92,10 +91,11 @@ describe('featureStatus', () => {
     expect(status({ mrs: [mr({ awaitsReview: true })] })).toBe('awaiting_decision');
   });
 
-  it('counts a Task as run once it has left to-do, and wont-do never ran', () => {
+  it('is in progress once a Task has left to-do or Jira says In Progress, and wont-do never ran', () => {
     for (const ran of ['in-progress', 'in-review', 'done']) {
       expect(status({ tasks: [task({ status: ran })] })).toBe('in_progress');
     }
+    expect(status({ inProgressInJira: true })).toBe('in_progress');
     expect(status({ tasks: [task({ status: 'wont-do' })] })).toBe('todo');
   });
 

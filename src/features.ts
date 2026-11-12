@@ -11,7 +11,6 @@ export interface Feature {
   branch: string;
   relates: string[];
   mrs: string[];
-  source: string;
   /** Why the file could not be read as a Feature (no frontmatter block, a failed read); the fields above are then empty. */
   unreadable?: string;
 }
@@ -94,7 +93,6 @@ export function toFeature(path: string, content: string, readError?: string): Fe
     branch: text(fm?.branch),
     relates: list(fm?.relates),
     mrs: list(fm?.mrs),
-    source: text(fm?.source),
     unreadable: readError ?? (fm ? undefined : 'no frontmatter block'),
   };
 }
@@ -103,8 +101,9 @@ export function toFeature(path: string, content: string, readError?: string): Fe
 const LISTING_CAP = 200;
 
 /**
- * Every Feature in `<workspace>/.features/`, sorted by id. A workspace without
- * the folder has no Features, which is not an error. `truncated` says the
+ * Every Feature in `<workspace>/.features/`, in no order (`boardRows` sorts
+ * the rows). A workspace without the folder has no Features, which is not an
+ * error. `truncated` says the
  * listing came back at the host's cap, so Feature files may be missing.
  */
 export async function loadFeatures(workspacePath: string): Promise<{ features: Feature[]; truncated: boolean }> {
@@ -126,7 +125,7 @@ export async function loadFeatures(workspacePath: string): Promise<{ features: F
     }),
   );
   return {
-    features: features.filter((f): f is Feature => f !== null).sort((a, b) => a.id.localeCompare(b.id)),
+    features: features.filter((f): f is Feature => f !== null),
     truncated: entries.length >= LISTING_CAP,
   };
 }
@@ -159,7 +158,11 @@ export function groupTasks(items: any[], workspace?: string): Map<string, TaskFa
   return byFeature;
 }
 
-/** Every Feature's Tasks in this workspace. The host returns an empty list when the tracker cannot be read. */
+/**
+ * Every Feature's Tasks in this workspace. A database failure comes back from
+ * the host as an empty list, which cannot be told from "no Tasks"; a workspace
+ * that is not open makes the call throw (host 0.82.0 and later).
+ */
 export async function loadTasks(workspacePath: string): Promise<Map<string, TaskFact[]>> {
   return groupTasks(
     (await window.electronAPI.invoke('document-service:tracker-items-list', workspacePath)) ?? [],
