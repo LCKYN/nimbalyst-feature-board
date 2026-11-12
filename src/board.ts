@@ -107,6 +107,24 @@ export const jiraSite = (claudeMd: string) => /^Jira project:.*\((https:\/\/[^/)
 export const epicUrl = (site: string, key: string | undefined) =>
   site && key && /^[A-Z][A-Z0-9]*-\d+$/.test(key) ? `${site}/browse/${key}` : '';
 
+/**
+ * `fn`, once, `ms` after the last call of a burst; `cancel` drops a call that
+ * is still pending.
+ *
+ * ponytail: trailing only, so calls that keep coming less than `ms` apart put
+ * `fn` off until they pause. Add a longest wait if a busy session ever holds
+ * the board back.
+ */
+export function trailing(fn: () => void, ms: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const call = () => {
+    clearTimeout(timer);
+    timer = setTimeout(fn, ms);
+  };
+  call.cancel = () => clearTimeout(timer);
+  return call;
+}
+
 /** True for the host's `file-changed-on-disk` event (`{ path }`) when the file is inside a `.features/` folder. */
 export const touchesFeatures = (event: unknown) => {
   const path = (event as { path?: unknown } | undefined)?.path;

@@ -15,6 +15,7 @@ import {
   readJiraCache,
   salesList,
   touchesFeatures,
+  trailing,
   usageLine,
   type JiraEpic,
 } from '../board';
@@ -537,6 +538,38 @@ describe('salesList', () => {
   it('says unknown for a row whose status the board does not show', () => {
     const rows = boardRows([feature({ id: 'ISF-99', epic: 'ISF-99', title: 'Later' })], new Map(), null);
     expect(salesList(rows)).toBe('Later — unknown');
+  });
+});
+
+describe('trailing', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('runs once after a burst of calls, a full wait after the last one', () => {
+    vi.useFakeTimers();
+    const reload = vi.fn();
+    const soon = trailing(reload, 300);
+    // A session writing five files 100 ms apart.
+    for (let i = 0; i < 5; i++) {
+      soon();
+      vi.advanceTimersByTime(100);
+    }
+    expect(reload).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(200);
+    expect(reload).toHaveBeenCalledTimes(1);
+    // The next burst loads again.
+    soon();
+    vi.advanceTimersByTime(300);
+    expect(reload).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops a pending call when cancelled', () => {
+    vi.useFakeTimers();
+    const reload = vi.fn();
+    const soon = trailing(reload, 300);
+    soon();
+    soon.cancel();
+    vi.advanceTimersByTime(1000);
+    expect(reload).not.toHaveBeenCalled();
   });
 });
 

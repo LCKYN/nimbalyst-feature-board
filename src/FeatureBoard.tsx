@@ -12,6 +12,7 @@ import {
   matches,
   salesList,
   touchesFeatures,
+  trailing,
   usageLine,
   type Board,
   type BoardRow,
@@ -84,23 +85,27 @@ export function FeatureBoard({ host }: PanelHostProps) {
   }, [foldersKey, reloads]);
   // A Task written by an agent or the Tracker, and a file changed, added or
   // deleted in `.features/` (Feature files and, until `.gitignore` lists it,
-  // the Jira cache: the host's watcher drops gitignored changes).
+  // the Jira cache: the host's watcher drops gitignored changes). A burst of
+  // events, such as a session writing several files, loads the board once.
   //
-  // ponytail: no debounce, a burst of events loads once per event; add a
-  // 300 ms timer if the board is seen to flicker or the host to slow down.
-  // Session changes are not listened to for that reason: the host's
-  // `ai-session-state:event` fires on every bit of session activity. A session
-  // that starts to wait shows on the next focus, Refresh or Task change;
-  // subscribe once the reload is debounced.
+  // ponytail: session changes are not listened to, so a session that starts to
+  // wait shows on the next focus, Refresh or Task change. The host sends
+  // `ai-session-state:event` on every bit of session activity; check what it
+  // carries, then subscribe it to `reloadSoon` as well.
   useEffect(() => {
+    const reloadSoon = trailing(reload, 300);
     // `?.`: a host without the method still gets the focus reload.
-    const offTasks = host.onWorkspaceEvent?.('document-service:tracker-items-changed', reload);
-    const offFiles = host.onWorkspaceEvent?.('file-changed-on-disk', (event) => touchesFeatures(event) && reload());
-    window.addEventListener('focus', reload);
+    const offTasks = host.onWorkspaceEvent?.('document-service:tracker-items-changed', reloadSoon);
+    const offFiles = host.onWorkspaceEvent?.(
+      'file-changed-on-disk',
+      (event) => touchesFeatures(event) && reloadSoon(),
+    );
+    window.addEventListener('focus', reloadSoon);
     return () => {
+      reloadSoon.cancel();
       offTasks?.();
       offFiles?.();
-      window.removeEventListener('focus', reload);
+      window.removeEventListener('focus', reloadSoon);
     };
   }, [host]);
 

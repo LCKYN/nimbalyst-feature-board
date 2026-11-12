@@ -24,7 +24,7 @@ The ↗ beside an id opens the Epic in Jira. The site comes from the repo's `CLA
 
 ## Staying current
 
-The board reloads when a Task changes, when a file in `.features/` changes, when the window gets the focus back, and from its Refresh button. A rewritten Jira cache is seen through the file event only while it is not in `.gitignore` (the host's watcher skips gitignored changes); after that, focus and Refresh pick it up. The board does not listen for session changes yet, so a session that starts to wait for an answer shows on the next of those reloads.
+The board reloads when a Task changes, when a file in `.features/` changes, when the window gets the focus back, and from its Refresh button. A burst of changes, such as a session writing several files, is one reload, 0.3 s after the last of them. A rewritten Jira cache is seen through the file event only while it is not in `.gitignore` (the host's watcher skips gitignored changes); after that, focus and Refresh pick it up. The board does not listen for session changes yet, so a session that starts to wait for an answer shows on the next of those reloads.
 
 ## Host
 
