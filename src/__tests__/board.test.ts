@@ -1,5 +1,14 @@
-import { describe, expect, it } from 'vitest';
-import { ago, boardRows, parseJiraCache, readJiraCache, type JiraEpic } from '../board';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  ago,
+  boardRows,
+  isStale,
+  isWorktreeGitFile,
+  loadBoard,
+  parseJiraCache,
+  readJiraCache,
+  type JiraEpic,
+} from '../board';
 import type { Feature } from '../features';
 import type { TaskFact } from '../featureStatus';
 
@@ -205,5 +214,107 @@ describe('ago', () => {
     expect(ago('2026-11-12T17:00:00Z', now)).toBe('');
     // One minute of clock skew still is.
     expect(ago('2026-11-12T10:00:30Z', now)).toBe('just now');
+  });
+});
+
+describe('isStale', () => {
+  const now = Date.parse('2026-11-12T00:00:00Z');
+
+  it('is true for a read older than a day, or at a time that cannot be trusted', () => {
+    expect(isStale('2026-11-11T23:00:00Z', now)).toBe(false);
+    expect(isStale('2026-11-10T23:59:00Z', now)).toBe(true);
+    expect(isStale('2026-11-01T00:00:00Z', now)).toBe(true);
+    expect(isStale('', now)).toBe(true);
+    expect(isStale('2026-11-12T07:00:00Z', now)).toBe(true);
+  });
+});
+
+describe('isWorktreeGitFile', () => {
+  it('knows the .git file of a linked worktree from a submodule and from nothing', () => {
+    expect(isWorktreeGitFile('gitdir: /repo/.git/worktrees/x\n')).toBe(true);
+    expect(isWorktreeGitFile('gitdir: ../.git/modules/lib\n')).toBe(false);
+    expect(isWorktreeGitFile('')).toBe(false);
+  });
+});
+
+describe('loadBoard', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  type Reply = string | { success: false; error: string };
+  /** A host with these folder listings and file contents; a file not named is absent. */
+  const host = (listings: Record<string, string[]>, files: Record<string, Reply> = {}, items: object[] = []) =>
+    vi.stubGlobal('window', {
+      electronAPI: {
+        invoke: async (channel: string, path: string) => {
+          if (channel === 'get-folder-contents') {
+            return (listings[path] ?? []).map((name) => ({ name, type: 'file', path: `${path}/${name}` }));
+          }
+          if (channel !== 'read-file-content') return items;
+          const reply = files[path];
+          return reply === undefined ? null : typeof reply === 'string' ? { success: true, content: reply } : reply;
+        },
+      },
+    });
+
+  it('reads the Feature files of every workspace folder, not only the first', async () => {
+    host({ '/b/.features': ['mr-1.md', 'jira-cache.json'] }, { '/b/.features/mr-1.md': '---\ntitle: Board\n---\n' });
+    const board = await loadBoard(['/a', '/b']);
+    expect(board.features.map((f) => [f.id, f.title])).toEqual([['mr-1', 'Board']]);
+    expect(board).toMatchObject({ jira: null, jiraError: undefined, truncated: false, worktree: false });
+  });
+
+  it('keeps a file whose read failed as a row and logs it, and drops one that is gone', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    host(
+      { '/ws/.features': ['ok.md', 'locked.md', 'gone.md', 'INDEX.md'] },
+      {
+        '/ws/.features/ok.md': '---\ntitle: Fine\n---\n',
+        '/ws/.features/locked.md': { success: false, error: 'EACCES' },
+        '/ws/.features/INDEX.md': '# Features\n',
+      },
+    );
+    const { features } = await loadBoard(['/ws']);
+    expect(Object.fromEntries(features.map((f) => [f.id, f.unreadable]))).toEqual({ ok: undefined, locked: 'EACCES' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]).toContain('locked.md');
+  });
+
+  it('says when a folder listing came back at the cap of 200 entries', async () => {
+    const names = (n: number) => Array.from({ length: n }, (_, i) => `f-${i}.txt`);
+    host({ '/ws/.features': names(199) });
+    expect((await loadBoard(['/ws'])).truncated).toBe(false);
+    host({ '/ws/.features': names(200) });
+    expect((await loadBoard(['/ws'])).truncated).toBe(true);
+  });
+
+  it('reports a cache that is there and broken, and joins the caches of several folders', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const one = (key: string, fetchedAt: string) =>
+      JSON.stringify({ fetchedAt, epics: [{ key, status: 'Done', openCards: 0, cardsInProgress: 0 }] });
+    host(
+      {},
+      {
+        '/a/.features/jira-cache.json': one('A-1', '2026-11-12T08:00:00Z'),
+        '/b/.features/jira-cache.json': one('B-1', '2026-11-10T08:00:00Z'),
+        '/c/.features/jira-cache.json': '{"epics": [',
+      },
+    );
+    const board = await loadBoard(['/a', '/b', '/c']);
+    // The oldest read dates the whole board.
+    expect(board.jira).toMatchObject({ fetchedAt: '2026-11-10T08:00:00Z', epics: [{ key: 'A-1' }, { key: 'B-1' }] });
+    expect(board.jiraError).toBeTruthy();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('knows a worktree opened as its own project, where neither the cache nor the Tasks are', async () => {
+    const feature = { '/ws/.features/RDHR-1.md': '---\nepic: RDHR-1\n---\n' };
+    host({ '/ws/.features': ['RDHR-1.md'] }, { ...feature, '/ws/.git': 'gitdir: /repo/.git/worktrees/ws\n' });
+    expect((await loadBoard(['/ws'])).worktree).toBe(true);
+    // A main checkout: `.git` is a folder, which the host cannot read as a file.
+    host({ '/ws/.features': ['RDHR-1.md'] }, { ...feature, '/ws/.git': { success: false, error: 'EISDIR' } });
+    expect((await loadBoard(['/ws'])).worktree).toBe(false);
   });
 });

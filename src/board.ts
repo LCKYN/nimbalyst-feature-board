@@ -1,4 +1,4 @@
-import type { Feature } from './features';
+import { loadFeatures, loadTasks, type Feature } from './features';
 import { featureStatus, taskProgress, type FeatureStatus, type TaskFact, type TaskProgress } from './featureStatus';
 
 /**
@@ -76,6 +76,58 @@ export async function loadJiraCache(workspacePath: string): Promise<JiraRead> {
   );
   if (read.error) console.warn('[feature-board] jira-cache.json could not be read:', read.error);
   return read;
+}
+
+/** True for the content of a linked worktree's `.git` file (`gitdir: <main checkout>/.git/worktrees/<name>`). */
+export const isWorktreeGitFile = (content: string) => /^gitdir:.*[\\/]worktrees[\\/]/.test(content);
+
+export interface Board {
+  features: Feature[];
+  tasks: Map<string, TaskFact[]>;
+  jira: JiraCache | null;
+  /** Why a `jira-cache.json` is there but could not be read. */
+  jiraError: string | undefined;
+  /** A `.features/` listing came back at the host's cap, so Feature files may be missing. */
+  truncated: boolean;
+  /** No cache was found and the workspace is a linked worktree: the cache and the Tasks are with the main checkout. */
+  worktree: boolean;
+}
+
+/**
+ * Everything the board shows. Feature files and the Jira cache are read from
+ * every folder of the workspace (`folders`, primary root first); Tasks hang on
+ * the primary root.
+ *
+ * ponytail: ids are taken to be unique across the folders, and the oldest
+ * `fetchedAt` dates every Epic. Key rows by folder and id if two enrolled
+ * repos are ever attached to one workspace.
+ */
+export async function loadBoard(folders: string[]): Promise<Board> {
+  const [lists, tasks, reads] = await Promise.all([
+    Promise.all(folders.map(loadFeatures)),
+    loadTasks(folders[0]),
+    Promise.all(folders.map(loadJiraCache)),
+  ]);
+  const features = lists.flatMap((l) => l.features);
+  const caches = reads.flatMap((r) => r.cache ?? []);
+  const jira = caches.length > 0
+    ? { fetchedAt: caches.map((c) => c.fetchedAt).sort()[0], epics: caches.flatMap((c) => c.epics) }
+    : null;
+  const jiraError = reads.find((r) => r.error)?.error;
+  // Asked only when a Feature names an Epic and no cache was found: in a main
+  // checkout `.git` is a folder, and the host logs each failed read of it.
+  const git =
+    !jira && !jiraError && features.some((f) => f.epic)
+      ? await window.electronAPI.invoke('read-file-content', `${folders[0]}/.git`)
+      : null;
+  return {
+    features,
+    tasks,
+    jira,
+    jiraError,
+    truncated: lists.some((l) => l.truncated),
+    worktree: Boolean(git?.success && isWorktreeGitFile(git.content)),
+  };
 }
 
 export interface BoardRow {
@@ -158,6 +210,12 @@ export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, c
     if (!placed.has(id)) rows.push(row(id, id, ''));
   }
   return rows.sort(byId);
+}
+
+/** A Jira read older than a day, or at a time `ago()` cannot tell, may no longer match Jira. */
+export function isStale(iso: string, now: number): boolean {
+  const age = now - Date.parse(iso);
+  return !(age >= -60_000 && age < 24 * 60 * 60_000);
 }
 
 /** "5 min ago", "3 h ago", "2 d ago"; empty for a time that cannot be read or is more than a minute ahead of `now`. */

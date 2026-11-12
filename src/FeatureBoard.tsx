@@ -1,56 +1,80 @@
 import { useEffect, useState } from 'react';
 import type { PanelHostProps } from '@nimbalyst/extension-sdk';
-import { ago, boardRows, loadJiraCache, type BoardRow, type JiraCache } from './board';
-import { loadFeatures, loadTasks, type Feature } from './features';
-import { STATUS_LABEL, type FeatureStatus, type TaskFact } from './featureStatus';
-
-interface Loaded {
-  features: Feature[];
-  tasks: Map<string, TaskFact[]>;
-  jira: JiraCache | null;
-  /** Why `jira-cache.json` is there but could not be read. */
-  jiraError?: string;
-}
+import { ago, boardRows, isStale, loadBoard, type Board, type BoardRow } from './board';
+import { STATUS_LABEL, type FeatureStatus } from './featureStatus';
 
 const CLOSED: FeatureStatus[] = ['done', 'cancelled'];
+/** What the checkbox reveals, in the words the Status column uses. */
+const CLOSED_LABEL = CLOSED.map((status) => STATUS_LABEL[status]).join(' / ');
 
+// The neutral dot is a text tone: a background tone (`bg-nim-tertiary`) is invisible on the panel.
 const STATUS_DOT: Record<FeatureStatus, string> = {
-  cancelled: 'bg-nim-tertiary',
+  cancelled: 'bg-[var(--nim-text-faint)]',
   done: 'bg-nim-success',
   awaiting_decision: 'bg-nim-warning',
   in_progress: 'bg-nim-primary',
   started: 'bg-nim-info',
   consulting: 'bg-nim-info',
-  todo: 'bg-nim-tertiary',
+  todo: 'bg-[var(--nim-text-faint)]',
 };
 
 export function FeatureBoard({ host }: PanelHostProps) {
-  const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [loaded, setLoaded] = useState<Board | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showClosed, setShowClosed] = useState(false);
+  // Opening a file unmounts the panel, so the choice is kept in the workspace's storage, not in state alone.
+  const [showClosed, setShowClosed] = useState(() => host.storage.get<boolean>('showClosed') ?? false);
+  const [reloads, setReloads] = useState(0);
+  const reload = () => setReloads((n) => n + 1);
 
-  // A fullscreen panel remounts each time it is opened, so loading on mount
-  // already picks up Feature files, Tasks and the Jira cache that changed while it was closed.
+  // Every folder of the workspace, primary root first. A host before SDK 0.6.0 has only the primary root.
+  const folders = host.getWorkspaceFolders?.() ?? [host.workspacePath];
+  const foldersKey = folders.join('\n');
+
+  // The host tells a panel nothing about file or tracker changes, so the board
+  // loads on mount, on Refresh, and whenever the window gets the focus back.
+  // The rows on screen stay until the new ones are in.
   useEffect(() => {
     let cancelled = false;
-    const ws = host.workspacePath;
-    Promise.all([loadFeatures(ws), loadTasks(ws), loadJiraCache(ws)])
-      .then(
-        ([features, tasks, jira]) =>
-          !cancelled && setLoaded({ features, tasks, jira: jira.cache, jiraError: jira.error }),
-      )
-      .catch((e) => !cancelled && setError(e instanceof Error ? e.message : String(e)));
+    loadBoard(folders)
+      .then((board) => {
+        if (cancelled) return;
+        setLoaded(board);
+        setError(null);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.error('[feature-board] load failed:', e);
+        setError(e instanceof Error ? e.message : String(e));
+      });
     return () => {
       cancelled = true;
     };
-  }, [host.workspacePath]);
+  }, [foldersKey, reloads]);
+  useEffect(() => {
+    window.addEventListener('focus', reload);
+    return () => window.removeEventListener('focus', reload);
+  }, []);
 
   const rows = loaded && boardRows(loaded.features, loaded.tasks, loaded.jira);
   const closedCount = rows?.filter((r) => CLOSED.includes(r.status)).length ?? 0;
   const shown = rows?.filter((r) => showClosed || !CLOSED.includes(r.status));
+  const hasTasks = shown?.some((r) => r.progress.total > 0) ?? false;
   const jira = loaded?.jira ?? null;
+  // Read on every render, and every load renders, so the age is as fresh as the rows.
+  const now = Date.now();
+  const jiraStale = jira !== null && isStale(jira.fetchedAt, now);
   // A Feature names an Epic but nothing was ever read from Jira for this workspace.
   const jiraNeverSynced = !jira && loaded?.features.some((f) => f.epic);
+  const jiraNote = loaded?.jiraError
+    ? `jira-cache.json could not be read (${loaded.jiraError}) · Jira status unknown · run /feature-sync`
+    : jira
+      ? `Jira read ${ago(jira.fetchedAt, now) || 'at an unknown time'} · ${jiraStale ? 'statuses may be out of date · ' : ''}/feature-sync refreshes it`
+      : loaded?.worktree
+        ? // /feature-sync writes the cache to the main checkout, so it cannot help here.
+          'This is a worktree · open the main checkout to see Jira status and Tasks'
+        : jiraNeverSynced
+          ? 'Jira status not read yet · run /feature-sync'
+          : '';
 
   return (
     <div className="feature-board flex h-full flex-col overflow-hidden bg-nim text-nim">
@@ -60,30 +84,51 @@ export function FeatureBoard({ host }: PanelHostProps) {
         {shown && <span className="text-xs text-nim-muted">{shown.length}</span>}
         {closedCount > 0 && (
           <label className="feature-board-show-closed flex cursor-pointer items-center gap-1.5 text-xs text-nim-muted">
-            <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} />
-            Show done ({closedCount})
+            <input
+              type="checkbox"
+              checked={showClosed}
+              onChange={(e) => {
+                setShowClosed(e.target.checked);
+                void host.storage.set('showClosed', e.target.checked);
+              }}
+            />
+            Show {CLOSED_LABEL} ({closedCount})
           </label>
         )}
+        <button type="button" className="feature-board-refresh text-xs text-nim-muted hover:underline" onClick={reload}>
+          Refresh
+        </button>
         <span
-          className={`feature-board-jira-age ml-auto text-xs select-text ${loaded?.jiraError ? 'text-nim-error' : 'text-nim-muted'}`}
+          className={`feature-board-jira-age ml-auto text-xs select-text ${
+            loaded?.jiraError ? 'text-nim-error' : jiraStale ? 'text-nim-warning' : 'text-nim-muted'
+          }`}
         >
-          {loaded?.jiraError
-            ? `jira-cache.json could not be read (${loaded.jiraError}) · Jira status unknown · run /feature-sync`
-            : jira
-              ? `Jira read ${ago(jira.fetchedAt, Date.now()) || 'at an unknown time'} · /feature-sync refreshes it`
-              : jiraNeverSynced
-                ? 'Jira status not read yet · run /feature-sync'
-                : ''}
+          {jiraNote}
         </span>
+        {/* ponytail: a fixed line while board.ts passes no sessions, worktrees or MR state; drop it with that gap. */}
+        <p className="feature-board-limits basis-full text-xs text-nim-muted">
+          Sessions, worktrees and MR state are not read yet: a row never shows {STATUS_LABEL.awaiting_decision},{' '}
+          {STATUS_LABEL.started} or {STATUS_LABEL.consulting}.
+        </p>
+        {loaded?.truncated && (
+          <p className="feature-board-truncated basis-full text-xs text-nim-warning">
+            Only the first 200 entries of .features/ were read; Feature files may be missing.
+          </p>
+        )}
       </div>
       <div className="feature-board-body flex-1 overflow-auto p-4">
         {error ? (
-          <p className="feature-board-error text-sm text-nim-error select-text">Could not read .features/: {error}</p>
+          <p className="feature-board-error text-sm text-nim-error select-text">Could not load the board: {error}</p>
         ) : !shown ? (
           <p className="text-sm text-nim-muted">Loading…</p>
         ) : rows!.length === 0 ? (
-          <p className="feature-board-empty text-sm text-nim-muted">
-            No Feature files in <code>.features/</code> of this workspace.
+          <p className="feature-board-empty text-sm text-nim-muted select-text">
+            No Feature files found in <code>{folders.map((folder) => `${folder}/.features/`).join(', ')}</code> (the
+            folder is missing, empty or could not be read).
+          </p>
+        ) : shown.length === 0 ? (
+          <p className="feature-board-all-closed text-sm text-nim-muted">
+            All {closedCount} Features are closed ({CLOSED_LABEL}). Tick “Show {CLOSED_LABEL}” to list them.
           </p>
         ) : (
           <table className="feature-board-table w-full border-collapse text-left text-sm">
@@ -94,14 +139,20 @@ export function FeatureBoard({ host }: PanelHostProps) {
                 <th className="px-3 py-2 font-medium">Status</th>
                 {jira && <th className="px-3 py-2 font-medium">Jira</th>}
                 {jira && <th className="px-3 py-2 font-medium">Labels</th>}
-                <th className="px-3 py-2 text-right font-medium">Tasks</th>
-                <th className="w-48 px-3 py-2 font-medium">Done</th>
-                <th className="px-3 py-2 font-medium">Open tasks</th>
+                {hasTasks && <th className="px-3 py-2 text-right font-medium">Tasks</th>}
+                {hasTasks && <th className="w-48 px-3 py-2 font-medium">Progress</th>}
+                {hasTasks && <th className="px-3 py-2 font-medium">Open tasks</th>}
               </tr>
             </thead>
             <tbody>
               {shown.map((row) => (
-                <FeatureRow key={row.id} row={row} hasJira={Boolean(jira)} onOpen={(path) => host.openFile(path)} />
+                <FeatureRow
+                  key={row.id}
+                  row={row}
+                  hasJira={Boolean(jira)}
+                  hasTasks={hasTasks}
+                  onOpen={(path) => host.openFile(path)}
+                />
               ))}
             </tbody>
           </table>
@@ -111,7 +162,17 @@ export function FeatureBoard({ host }: PanelHostProps) {
   );
 }
 
-function FeatureRow({ row, hasJira, onOpen }: { row: BoardRow; hasJira: boolean; onOpen: (path: string) => void }) {
+function FeatureRow({
+  row,
+  hasJira,
+  hasTasks,
+  onOpen,
+}: {
+  row: BoardRow;
+  hasJira: boolean;
+  hasTasks: boolean;
+  onOpen: (path: string) => void;
+}) {
   const { feature, epic, progress } = row;
   const { total, done } = progress;
   const openTasks = [
@@ -133,18 +194,26 @@ function FeatureRow({ row, hasJira, onOpen }: { row: BoardRow; hasJira: boolean;
   return (
     <tr
       className={`feature-row border-b border-nim align-top ${open ? 'cursor-pointer hover:bg-nim-hover' : ''}`}
-      onClick={open}
+      // A click that ends a text selection (copying the id, a branch name) is not a request to open the file.
+      onClick={open && (() => window.getSelection()?.toString() || open())}
     >
       <td className="px-3 py-2">
         {open ? (
           // The button keeps the row reachable by keyboard; the row click is the larger mouse target.
-          <button type="button" className="feature-row-title text-left font-medium text-nim hover:underline">
+          <button
+            type="button"
+            className="feature-row-title text-left font-medium text-nim hover:underline"
+            onClick={(e) => {
+              e.stopPropagation();
+              open();
+            }}
+          >
             {row.title}
           </button>
         ) : (
           <span className="feature-row-title text-nim-muted">{row.title}</span>
         )}
-        {meta.length > 0 && <div className="feature-row-meta mt-0.5 text-xs text-nim-faint">{meta.join(' · ')}</div>}
+        {meta.length > 0 && <div className="feature-row-meta mt-0.5 text-xs text-nim-muted">{meta.join(' · ')}</div>}
         {feature?.unreadable && (
           <div className="feature-row-unreadable mt-0.5 text-xs text-nim-error">
             File not read as a Feature: {feature.unreadable}
@@ -168,7 +237,7 @@ function FeatureRow({ row, hasJira, onOpen }: { row: BoardRow; hasJira: boolean;
           {row.blocked && <span className="text-xs text-nim-error">blocked</span>}
         </span>
         {row.mrStateUnknown && row.unknown !== 'MR state not read' && (
-          <div className="mt-0.5 text-xs text-nim-faint">MR state not read</div>
+          <div className="mt-0.5 text-xs text-nim-muted">MR state not read</div>
         )}
       </td>
       {hasJira && (
@@ -178,7 +247,7 @@ function FeatureRow({ row, hasJira, onOpen }: { row: BoardRow; hasJira: boolean;
             <>
               {epic.status}
               {epic.openCards > 0 && (
-                <div className="mt-0.5 text-xs text-nim-faint">
+                <div className="mt-0.5 text-xs text-nim-muted">
                   {epic.openCards} open {epic.openCards === 1 ? 'card' : 'cards'}
                   {epic.cardsInProgress > 0 && `, ${epic.cardsInProgress} in progress`}
                 </div>
@@ -198,20 +267,23 @@ function FeatureRow({ row, hasJira, onOpen }: { row: BoardRow; hasJira: boolean;
           </span>
         </td>
       )}
-      <td className="feature-row-tasks px-3 py-2 text-right tabular-nums">{total || ''}</td>
-      <td className="feature-row-done px-3 py-2">
-        {total > 0 && (
-          <div className="flex items-center gap-2">
-            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-nim-tertiary">
-              <div className="h-full rounded-full bg-nim-success" style={{ width: `${(done / total) * 100}%` }} />
+      {hasTasks && <td className="feature-row-tasks px-3 py-2 text-right tabular-nums">{total || ''}</td>}
+      {hasTasks && (
+        <td className="feature-row-done px-3 py-2">
+          {total > 0 && (
+            <div className="flex items-center gap-2">
+              {/* The border keeps an empty track visible: its background tone alone is not. */}
+              <div className="h-2 flex-1 overflow-hidden rounded-full border border-nim bg-nim-tertiary">
+                <div className="h-full rounded-full bg-nim-success" style={{ width: `${(done / total) * 100}%` }} />
+              </div>
+              <span className="whitespace-nowrap tabular-nums">
+                {done}/{total}
+              </span>
             </div>
-            <span className="whitespace-nowrap tabular-nums">
-              {done}/{total}
-            </span>
-          </div>
-        )}
-      </td>
-      <td className="feature-row-open px-3 py-2 text-nim-muted">{openTasks.join(' · ')}</td>
+          )}
+        </td>
+      )}
+      {hasTasks && <td className="feature-row-open px-3 py-2 text-nim-muted">{openTasks.join(' · ')}</td>}
     </tr>
   );
 }

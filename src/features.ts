@@ -99,11 +99,15 @@ export function toFeature(path: string, content: string, readError?: string): Fe
   };
 }
 
+/** The host's cap on one folder listing; it cuts the list there without saying so. */
+const LISTING_CAP = 200;
+
 /**
  * Every Feature in `<workspace>/.features/`, sorted by id. A workspace without
- * the folder has no Features, which is not an error.
+ * the folder has no Features, which is not an error. `truncated` says the
+ * listing came back at the host's cap, so Feature files may be missing.
  */
-export async function loadFeatures(workspacePath: string): Promise<Feature[]> {
+export async function loadFeatures(workspacePath: string): Promise<{ features: Feature[]; truncated: boolean }> {
   // ponytail: the host caps a folder listing at 200 entries; read the folder
   // through a backend module if a repo ever holds more Feature files than that.
   const entries: Array<{ name: string; type: string; path: string }> =
@@ -121,7 +125,10 @@ export async function loadFeatures(workspacePath: string): Promise<Feature[]> {
       return feature;
     }),
   );
-  return features.filter((f): f is Feature => f !== null).sort((a, b) => a.id.localeCompare(b.id));
+  return {
+    features: features.filter((f): f is Feature => f !== null).sort((a, b) => a.id.localeCompare(b.id)),
+    truncated: entries.length >= LISTING_CAP,
+  };
 }
 
 /**
