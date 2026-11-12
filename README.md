@@ -11,11 +11,15 @@ A [Nimbalyst](https://github.com/nimbalyst/nimbalyst) extension that adds a full
 - **The main checkout's workspace.** The Jira cache and the Tasks are kept with the repo's main checkout. A worktree opened as its own project shows its Feature files without Jira status or Tasks, and the board says so.
 - **Up to 200 entries of `.features/`**, which is where the host cuts a folder listing. The board says when a listing came back at that cap.
 
+## Staying current
+
+The board reloads when a Task changes, when a file in `.features/` changes, when the window gets the focus back, and from its Refresh button. A rewritten Jira cache is seen through the file event only while it is not in `.gitignore` (the host's watcher skips gitignored changes); after that, focus and Refresh pick it up. The board does not listen for session changes yet, so a session that starts to wait for an answer shows on the next of those reloads.
+
 ## Host
 
 Tested on Nimbalyst 0.82.0 or later. An older host can answer the tracker listing for another project; the board drops those items, so it shows no Tasks there, not wrong ones.
 
-The SDK has no documented way to list a folder, the tracker items or the sessions, so the board calls undocumented host IPC channels through `window.electronAPI.invoke`: `get-folder-contents`, `read-file-content`, `document-service:tracker-items-list`, `sessions:list` and `ai-session-state:get-state`. It opens a session with the host's `open-ai-session` window event. A host that renames or reshapes one of them breaks the board.
+The SDK has no documented way to list a folder, the tracker items or the sessions, so the board calls undocumented host IPC channels through `window.electronAPI.invoke`: `get-folder-contents`, `read-file-content`, `document-service:tracker-items-list`, `sessions:list` and `ai-session-state:get-state`. It opens a session with the host's `open-ai-session` window event, and listens to the host events `document-service:tracker-items-changed` and `file-changed-on-disk` through `host.onWorkspaceEvent`. A host that renames or reshapes one of them breaks the board.
 
 ## Build and install
 

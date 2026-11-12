@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { PanelHostProps } from '@nimbalyst/extension-sdk';
-import { ago, boardRows, isStale, loadBoard, type Board, type BoardRow } from './board';
+import { ago, boardRows, isStale, loadBoard, touchesFeatures, type Board, type BoardRow } from './board';
 import { sortTasks, STATUS_LABEL, type FeatureStatus, type WaitItem } from './featureStatus';
 
 const CLOSED: FeatureStatus[] = ['done', 'cancelled'];
@@ -46,9 +46,8 @@ export function FeatureBoard({ host }: PanelHostProps) {
   const folders = host.getWorkspaceFolders?.() ?? [host.workspacePath];
   const foldersKey = folders.join('\n');
 
-  // The host tells a panel nothing about file or tracker changes, so the board
-  // loads on mount, on Refresh, and whenever the window gets the focus back.
-  // The rows on screen stay until the new ones are in.
+  // The board loads on mount, on Refresh, when the window gets the focus back
+  // and on the two host events below. The rows on screen stay until the new ones are in.
   useEffect(() => {
     let cancelled = false;
     loadBoard(folders)
@@ -66,10 +65,27 @@ export function FeatureBoard({ host }: PanelHostProps) {
       cancelled = true;
     };
   }, [foldersKey, reloads]);
+  // A Task written by an agent or the Tracker, and a file changed, added or
+  // deleted in `.features/` (Feature files and, until `.gitignore` lists it,
+  // the Jira cache: the host's watcher drops gitignored changes).
+  //
+  // ponytail: no debounce, a burst of events loads once per event; add a
+  // 300 ms timer if the board is seen to flicker or the host to slow down.
+  // Session changes are not listened to for that reason: the host's
+  // `ai-session-state:event` fires on every bit of session activity. A session
+  // that starts to wait shows on the next focus, Refresh or Task change;
+  // subscribe once the reload is debounced.
   useEffect(() => {
+    // `?.`: a host without the method still gets the focus reload.
+    const offTasks = host.onWorkspaceEvent?.('document-service:tracker-items-changed', reload);
+    const offFiles = host.onWorkspaceEvent?.('file-changed-on-disk', (event) => touchesFeatures(event) && reload());
     window.addEventListener('focus', reload);
-    return () => window.removeEventListener('focus', reload);
-  }, []);
+    return () => {
+      offTasks?.();
+      offFiles?.();
+      window.removeEventListener('focus', reload);
+    };
+  }, [host]);
 
   const rows = loaded && boardRows(loaded.features, loaded.tasks, loaded.jira, loaded.sessions, overrides);
   // The host's own way to show a session (its git panel does the same); it leaves the board.

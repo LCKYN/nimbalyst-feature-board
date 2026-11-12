@@ -7,6 +7,7 @@ import {
   loadBoard,
   parseJiraCache,
   readJiraCache,
+  touchesFeatures,
   type JiraEpic,
 } from '../board';
 import type { Feature } from '../features';
@@ -287,6 +288,18 @@ describe('isStale', () => {
     expect(isStale('2026-11-01T00:00:00Z', now)).toBe(true);
     expect(isStale('', now)).toBe(true);
     expect(isStale('2026-11-12T07:00:00Z', now)).toBe(true);
+  });
+});
+
+describe('touchesFeatures', () => {
+  it('is true for a file event inside a .features/ folder, on either kind of path', () => {
+    expect(touchesFeatures({ path: '/ws/.features/RDHR-144.md' })).toBe(true);
+    expect(touchesFeatures({ path: '/ws/.features/jira-cache.json' })).toBe(true);
+    expect(touchesFeatures({ path: 'C:\\ws\\.features\\mr-1.md' })).toBe(true);
+    expect(touchesFeatures({ path: '/ws/docs/.features.md' })).toBe(false);
+    expect(touchesFeatures({ path: '/ws/src/board.ts' })).toBe(false);
+    expect(touchesFeatures({ filePath: '/ws/.features/x.md' })).toBe(false);
+    expect(touchesFeatures(undefined)).toBe(false);
   });
 });
 

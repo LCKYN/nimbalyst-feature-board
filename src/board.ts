@@ -89,6 +89,12 @@ export async function loadJiraCache(workspacePath: string): Promise<JiraRead> {
   return read;
 }
 
+/** True for the host's `file-changed-on-disk` event (`{ path }`) when the file is inside a `.features/` folder. */
+export const touchesFeatures = (event: unknown) => {
+  const path = (event as { path?: unknown } | undefined)?.path;
+  return typeof path === 'string' && /[\\/]\.features[\\/]/.test(path);
+};
+
 /** True for the content of a linked worktree's `.git` file (`gitdir: <main checkout>/.git/worktrees/<name>`). */
 export const isWorktreeGitFile = (content: string) => /^gitdir:.*[\\/]worktrees[\\/]/.test(content);
 
