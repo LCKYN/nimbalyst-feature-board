@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { PanelHostProps } from '@nimbalyst/extension-sdk';
 import { ago, boardRows, isStale, loadBoard, type Board, type BoardRow } from './board';
-import { sortTasks, STATUS_LABEL, type FeatureStatus } from './featureStatus';
+import { sortTasks, STATUS_LABEL, type FeatureStatus, type WaitItem } from './featureStatus';
 
 const CLOSED: FeatureStatus[] = ['done', 'cancelled'];
 /** What the checkbox reveals, in the words the Status column uses. */
@@ -16,6 +16,14 @@ const STATUS_DOT: Record<FeatureStatus, string> = {
   started: 'bg-nim-info',
   consulting: 'bg-nim-info',
   todo: 'bg-[var(--nim-text-faint)]',
+};
+
+const WAIT_LABEL: Record<WaitItem['kind'], string> = {
+  decision: 'question in session',
+  review: 'MR waits for review',
+  ci_failed: 'CI failed on MR',
+  session_error: 'session ended with an error',
+  blocked: 'blocked Task',
 };
 
 export function FeatureBoard({ host }: PanelHostProps) {
@@ -55,7 +63,12 @@ export function FeatureBoard({ host }: PanelHostProps) {
     return () => window.removeEventListener('focus', reload);
   }, []);
 
-  const rows = loaded && boardRows(loaded.features, loaded.tasks, loaded.jira);
+  const rows = loaded && boardRows(loaded.features, loaded.tasks, loaded.jira, loaded.sessions);
+  // The host's own way to show a session (its git panel does the same); it leaves the board.
+  const openSession = (sessionId: string) =>
+    window.dispatchEvent(
+      new CustomEvent('open-ai-session', { detail: { sessionId, workspacePath: host.workspacePath } }),
+    );
   const closedCount = rows?.filter((r) => CLOSED.includes(r.status)).length ?? 0;
   const shown = rows?.filter((r) => showClosed || !CLOSED.includes(r.status));
   const hasTasks = shown?.some((r) => r.progress.total > 0) ?? false;
@@ -105,10 +118,10 @@ export function FeatureBoard({ host }: PanelHostProps) {
         >
           {jiraNote}
         </span>
-        {/* ponytail: a fixed line while board.ts passes no sessions, worktrees or MR state; drop it with that gap. */}
+        {/* ponytail: a fixed line while board.ts passes no worktree and no MR state; drop it with that gap. */}
         <p className="feature-board-limits basis-full text-xs text-nim-muted">
-          Sessions, worktrees and MR state are not read yet: a row never shows {STATUS_LABEL.awaiting_decision},{' '}
-          {STATUS_LABEL.started} or {STATUS_LABEL.consulting}.
+          Worktrees and MR state are not read yet: a row never shows {STATUS_LABEL.started}, and an MR that waits for
+          review or failed CI is not listed.
         </p>
         {loaded?.truncated && (
           <p className="feature-board-truncated basis-full text-xs text-nim-warning">
@@ -131,34 +144,83 @@ export function FeatureBoard({ host }: PanelHostProps) {
             All {closedCount} Features are closed ({CLOSED_LABEL}). Tick “Show {CLOSED_LABEL}” to list them.
           </p>
         ) : (
-          <table className="feature-board-table w-full border-collapse text-left text-sm">
-            <thead>
-              <tr className="border-b border-nim text-xs text-nim-muted">
-                <th className="px-3 py-2 font-medium">Feature</th>
-                <th className="px-3 py-2 font-medium">ID</th>
-                <th className="px-3 py-2 font-medium">Status</th>
-                {jira && <th className="px-3 py-2 font-medium">Jira</th>}
-                {jira && <th className="px-3 py-2 font-medium">Labels</th>}
-                {hasTasks && <th className="px-3 py-2 text-right font-medium">Tasks</th>}
-                {hasTasks && <th className="w-48 px-3 py-2 font-medium">Progress</th>}
-                {hasTasks && <th className="px-3 py-2 font-medium">Open tasks</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {shown.map((row) => (
-                <FeatureRow
-                  key={row.id}
-                  row={row}
-                  hasJira={Boolean(jira)}
-                  hasTasks={hasTasks}
-                  onOpen={(path) => host.openFile(path)}
-                />
-              ))}
-            </tbody>
-          </table>
+          <>
+            <WaitList
+              title="Waiting on you"
+              items={rows!.flatMap((r) => r.waiting)}
+              now={now}
+              onOpenSession={openSession}
+            />
+            <WaitList title="Stuck" items={rows!.flatMap((r) => r.stuck)} now={now} onOpenSession={openSession} />
+            <table className="feature-board-table w-full border-collapse text-left text-sm">
+              <thead>
+                <tr className="border-b border-nim text-xs text-nim-muted">
+                  <th className="px-3 py-2 font-medium">Feature</th>
+                  <th className="px-3 py-2 font-medium">ID</th>
+                  <th className="px-3 py-2 font-medium">Status</th>
+                  {jira && <th className="px-3 py-2 font-medium">Jira</th>}
+                  {jira && <th className="px-3 py-2 font-medium">Labels</th>}
+                  {hasTasks && <th className="px-3 py-2 text-right font-medium">Tasks</th>}
+                  {hasTasks && <th className="w-48 px-3 py-2 font-medium">Progress</th>}
+                  {hasTasks && <th className="px-3 py-2 font-medium">Open tasks</th>}
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((row) => (
+                  <FeatureRow
+                    key={row.id}
+                    row={row}
+                    hasJira={Boolean(jira)}
+                    hasTasks={hasTasks}
+                    onOpen={(path) => host.openFile(path)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </>
         )}
       </div>
     </div>
+  );
+}
+
+/** One of the two lists above the table: what needs an answer, or what cannot move on its own. */
+function WaitList({
+  title,
+  items,
+  now,
+  onOpenSession,
+}: {
+  title: string;
+  items: WaitItem[];
+  now: number;
+  onOpenSession: (sessionId: string) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <section className="feature-board-wait mb-4 text-sm select-text">
+      <h2 className="m-0 mb-1 text-xs font-semibold text-nim">
+        {title} ({items.length})
+      </h2>
+      {items.map((item, i) => (
+        <div key={i} className="feature-board-wait-item flex flex-wrap items-baseline gap-x-2 py-0.5">
+          <span className="font-mono text-xs text-nim-muted">{item.featureId}</span>
+          <span>
+            {WAIT_LABEL[item.kind]}: {item.title}
+          </span>
+          <span className="text-xs text-nim-muted">{ago(item.openedAt, now)}</span>
+          {item.sessionId && (
+            <button
+              type="button"
+              className="text-xs text-nim-muted underline"
+              onClick={() => onOpenSession(item.sessionId!)}
+            >
+              open session
+            </button>
+          )}
+        </div>
+      ))}
+    </section>
   );
 }
 
@@ -236,6 +298,7 @@ function FeatureRow({
             </>
           )}
           {row.blocked && <span className="text-xs text-nim-error">blocked</span>}
+          {row.stalled && <span className="text-xs text-nim-warning">stalled</span>}
         </span>
         {row.mrStateUnknown && row.unknown !== 'MR state not read' && (
           <div className="mt-0.5 text-xs text-nim-muted">MR state not read</div>

@@ -1,4 +1,4 @@
-import type { TaskFact } from './featureStatus';
+import type { SessionFact, TaskFact } from './featureStatus';
 
 export interface Feature {
   /** File name without `.md`; the rules make this the Feature's id. */
@@ -212,4 +212,50 @@ export async function loadTasks(workspacePath: string): Promise<Map<string, Task
     (await window.electronAPI.invoke('document-service:tracker-items-list', workspacePath)) ?? [],
     workspacePath,
   );
+}
+
+/**
+ * The workspace's AI sessions that are linked to a Feature's Task, by Feature
+ * id, each with its live state. A session linked to several Tasks of one
+ * Feature counts once, under the first of them. Archived sessions are not
+ * listed by the host, so an old unanswered prompt does not linger.
+ */
+export async function loadSessions(
+  workspacePath: string,
+  tasks: Map<string, TaskFact[]>,
+): Promise<Map<string, SessionFact[]>> {
+  const listed = await window.electronAPI.invoke('sessions:list', workspacePath);
+  if (!listed?.success) console.warn('[feature-board] sessions could not be listed:', listed?.error);
+  const featureOf = new Map([...tasks].flatMap(([featureId, own]) => own.map((t) => [t.id, featureId] as const)));
+
+  const linked = await Promise.all(
+    (listed?.sessions ?? []).map(async (session: any) => {
+      const ids: unknown[] = Array.isArray(session.linkedTrackerItemIds) ? session.linkedTrackerItemIds : [];
+      const taskIds = ids.filter((id): id is string => typeof id === 'string' && featureOf.has(id));
+      if (taskIds.length === 0) return [];
+      // The host keeps live state only for sessions it tracks; none means idle.
+      const state = (await window.electronAPI.invoke('ai-session-state:get-state', session.id))?.state;
+      const seen = new Set<string>();
+      return taskIds.flatMap((taskId) => {
+        const featureId = featureOf.get(taskId)!;
+        if (seen.has(featureId)) return [];
+        seen.add(featureId);
+        const fact: SessionFact = {
+          id: session.id,
+          title: session.title ?? '',
+          taskId,
+          status: state?.isStreaming ? 'running' : (state?.status ?? 'idle'),
+          hasPendingPrompt: Boolean(session.hasPendingInteractivePrompt),
+          updatedAt: Number(session.updatedAt) || 0,
+        };
+        return [{ featureId, fact }];
+      });
+    }),
+  );
+
+  const byFeature = new Map<string, SessionFact[]>();
+  for (const { featureId, fact } of linked.flat()) {
+    byFeature.set(featureId, [...(byFeature.get(featureId) ?? []), fact]);
+  }
+  return byFeature;
 }

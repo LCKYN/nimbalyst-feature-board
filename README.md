@@ -4,7 +4,8 @@ A [Nimbalyst](https://github.com/nimbalyst/nimbalyst) extension that adds a full
 
 ## What the board can show today
 
-- **Four of the seven statuses**: จะทำ, กำลังทำ, เสร็จแล้ว and ยกเลิก. Sessions, worktrees and MR state are not read yet, so รอตัดสินใจ, เริ่มทำ and ปรึกษา never appear, and neither does the `stalled` flag.
+- **Six of the seven statuses**: every one but เริ่มทำ, which needs to know whether a worktree for the Feature's `branch` exists. Worktrees and MR state are not read yet, so such a Feature reads ปรึกษา or จะทำ, and an MR that waits for review or failed CI neither makes a row รอตัดสินใจ nor shows in the lists.
+- **"Waiting on you" and "Stuck"** above the table: a session linked to one of the Feature's Tasks that has an unanswered question (it opens from there), a blocked Task, a session that ended with an error. A Feature in กำลังทำ with Tasks and no running session is flagged `stalled`.
 - **`unknown` in place of a status** when a fact it needs was not read: the Feature names an Epic the cache does not hold (`Jira not read`), or it lists MRs and nothing open explains its status (`MR !345 not checked`). A Feature whose file has an `mrs` key (an MR repo, also while the list is empty) is never เสร็จแล้ว from its Epic alone.
 - **No hand-set status.** The rules let the user set a status by hand on the board; that is not built, so ยกเลิก comes only from the Epic's `rejected` label.
 - **The main checkout's workspace.** The Jira cache and the Tasks are kept with the repo's main checkout. A worktree opened as its own project shows its Feature files without Jira status or Tasks, and the board says so.
@@ -14,7 +15,7 @@ A [Nimbalyst](https://github.com/nimbalyst/nimbalyst) extension that adds a full
 
 Tested on Nimbalyst 0.82.0 or later. An older host can answer the tracker listing for another project; the board drops those items, so it shows no Tasks there, not wrong ones.
 
-The SDK has no documented way to list a folder or the tracker items, so the board calls three undocumented host IPC channels through `window.electronAPI.invoke`: `get-folder-contents`, `read-file-content` and `document-service:tracker-items-list`. A host that renames or reshapes one of them breaks the board.
+The SDK has no documented way to list a folder, the tracker items or the sessions, so the board calls undocumented host IPC channels through `window.electronAPI.invoke`: `get-folder-contents`, `read-file-content`, `document-service:tracker-items-list`, `sessions:list` and `ai-session-state:get-state`. It opens a session with the host's `open-ai-session` window event. A host that renames or reshapes one of them breaks the board.
 
 ## Build and install
 

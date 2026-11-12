@@ -1,5 +1,15 @@
-import { loadFeatures, loadTasks, type Feature } from './features';
-import { featureStatus, taskProgress, type FeatureStatus, type TaskFact, type TaskProgress } from './featureStatus';
+import { loadFeatures, loadSessions, loadTasks, type Feature } from './features';
+import {
+  featureStatus,
+  taskProgress,
+  waitItems,
+  type FeatureFacts,
+  type FeatureStatus,
+  type SessionFact,
+  type TaskFact,
+  type TaskProgress,
+  type WaitItem,
+} from './featureStatus';
 
 /**
  * One Epic in `.features/jira-cache.json`. The board has no Jira login: the
@@ -84,6 +94,8 @@ export const isWorktreeGitFile = (content: string) => /^gitdir:.*[\\/]worktrees[
 export interface Board {
   features: Feature[];
   tasks: Map<string, TaskFact[]>;
+  /** The sessions linked to each Feature's Tasks, by Feature id. */
+  sessions: Map<string, SessionFact[]>;
   jira: JiraCache | null;
   /** Why a `jira-cache.json` is there but could not be read. */
   jiraError: string | undefined;
@@ -95,8 +107,8 @@ export interface Board {
 
 /**
  * Everything the board shows. Feature files and the Jira cache are read from
- * every folder of the workspace (`folders`, primary root first); Tasks hang on
- * the primary root.
+ * every folder of the workspace (`folders`, primary root first); Tasks and
+ * sessions hang on the primary root.
  *
  * ponytail: ids are taken to be unique across the folders, and the oldest
  * `fetchedAt` dates every Epic. Key rows by folder and id if two enrolled
@@ -108,6 +120,7 @@ export async function loadBoard(folders: string[]): Promise<Board> {
     loadTasks(folders[0]),
     Promise.all(folders.map(loadJiraCache)),
   ]);
+  const sessions = await loadSessions(folders[0], tasks);
   const features = lists.flatMap((l) => l.features);
   const caches = reads.flatMap((r) => r.cache ?? []);
   const jira = caches.length > 0
@@ -123,6 +136,7 @@ export async function loadBoard(folders: string[]): Promise<Board> {
   return {
     features,
     tasks,
+    sessions,
     jira,
     jiraError,
     truncated: lists.some((l) => l.truncated),
@@ -142,6 +156,10 @@ export interface BoardRow {
   progress: TaskProgress;
   status: FeatureStatus;
   blocked: boolean;
+  stalled: boolean;
+  /** What needs an answer from the user, and what cannot move on its own. */
+  waiting: WaitItem[];
+  stuck: WaitItem[];
   /**
    * The file lists MRs, whose state the board does not read yet. Such a row is
    * never `done` (a Done Epic does not stand in for the MRs, nor for an `mrs`
@@ -152,7 +170,7 @@ export interface BoardRow {
   /**
    * Set when `status` was computed without a fact it needs, so the board says
    * "unknown" in its place: the Feature names an Epic the cache does not hold,
-   * or it lists MRs and nothing open (Task, card, Jira In Progress) explains its status.
+   * or it lists MRs and nothing open (Task, card, Jira In Progress, a session's question) explains its status.
    */
   unknown?: 'Jira not read' | 'MR state not read';
 }
@@ -164,16 +182,25 @@ const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id, 
  * per Task `featureId` that matches neither, each with its status from the
  * rules table.
  *
- * ponytail: sessions, worktrees and MR state are not read yet, so a row is
- * never `awaiting_decision`, `consulting` or `started`, and the `stalled` flag
- * is left out. Pass those facts in here once the board gathers them.
+ * ponytail: worktrees and MR state are not read yet, so a row is never
+ * `started` (it reads `consulting` or `todo`) and an MR never makes one
+ * `awaiting_decision`, `cancelled` or blocked. A worktree for `branch` is not
+ * in the host's `worktree:list`, which knows only the worktrees Nimbalyst made;
+ * it takes `git worktree list` through `host.exec`, and so the `filesystem`
+ * permission, which lets this read-only panel run shell commands. That is the
+ * owner's decision. Pass both facts in here once the board gathers them.
  *
  * ponytail: a status set by hand on the board ("The user may set a status by
  * hand" in the rules) is not built, so `cancelled` has one source, the
  * `rejected` label. Keep the override in `host.storage`, apply it after
  * `featureStatus()` and mark the row as hand-set.
  */
-export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, cache: JiraCache | null): BoardRow[] {
+export function boardRows(
+  features: Feature[],
+  tasks: Map<string, TaskFact[]>,
+  cache: JiraCache | null,
+  sessions: Map<string, SessionFact[]> = new Map(),
+): BoardRow[] {
   const epics = new Map((cache?.epics ?? []).map((e) => [e.key, e]));
   const withFile = new Set<string>();
 
@@ -184,7 +211,7 @@ export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, c
     const jiraStatus = epic?.status.trim().toLowerCase();
     const hasOpenCard = epic ? epic.openCards > 0 : undefined;
     const inProgressInJira = epic ? epic.cardsInProgress > 0 || jiraStatus === 'in progress' : undefined;
-    const { status, blocked } = featureStatus({
+    const facts: FeatureFacts = {
       featureId: id,
       // `rejected` is one of the fixed Jira labels; "Labels" in `~/.claude/card-rules.md` owns the name.
       cancelled: epic?.labels.includes('rejected'),
@@ -195,13 +222,34 @@ export function boardRows(features: Feature[], tasks: Map<string, TaskFact[]>, c
       epicDone: epic && !feature?.hasMrsKey ? jiraStatus === 'done' : undefined,
       hasWorktree: false,
       tasks: own,
-      sessions: [],
+      sessions: sessions.get(id) ?? [],
       mrs: [],
-    });
-    const explained = status === 'cancelled' || progress.total > progress.done || hasOpenCard || inProgressInJira;
+    };
+    const { status, blocked, stalled } = featureStatus(facts);
+    const { waiting, stuck } = waitItems(facts);
+    const explained =
+      status === 'cancelled' ||
+      progress.total > progress.done ||
+      hasOpenCard ||
+      inProgressInJira ||
+      waiting.length > 0;
     const unknown =
       feature?.epic && !epic ? 'Jira not read' : mrStateUnknown && !explained ? 'MR state not read' : undefined;
-    return { id, title, feature, epic, tasks: own, progress, status, blocked, mrStateUnknown, unknown };
+    return {
+      id,
+      title,
+      feature,
+      epic,
+      tasks: own,
+      progress,
+      status,
+      blocked,
+      stalled,
+      waiting,
+      stuck,
+      mrStateUnknown,
+      unknown,
+    };
   };
 
   const rows = features.map((feature) => {
@@ -227,10 +275,14 @@ export function isStale(iso: string, now: number): boolean {
   return !(age >= -60_000 && age < 24 * 60 * 60_000);
 }
 
-/** "5 min ago", "3 h ago", "2 d ago"; empty for a time that cannot be read or is more than a minute ahead of `now`. */
-export function ago(iso: string, now: number): string {
-  const minutes = Math.floor((now - Date.parse(iso)) / 60_000);
-  if (Number.isNaN(minutes) || minutes < -1) return '';
+/**
+ * "5 min ago", "3 h ago", "2 d ago" for an ISO time or one in milliseconds;
+ * empty for a time that cannot be read, is 0, or is more than a minute ahead of `now`.
+ */
+export function ago(time: string | number, now: number): string {
+  const at = typeof time === 'number' ? time : Date.parse(time);
+  const minutes = Math.floor((now - at) / 60_000);
+  if (!at || minutes < -1) return '';
   if (minutes < 1) return 'just now';
   if (minutes < 60) return `${minutes} min ago`;
   if (minutes < 60 * 24) return `${Math.floor(minutes / 60)} h ago`;

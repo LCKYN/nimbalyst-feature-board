@@ -10,7 +10,7 @@ import {
   type JiraEpic,
 } from '../board';
 import type { Feature } from '../features';
-import type { TaskFact } from '../featureStatus';
+import type { SessionFact, TaskFact } from '../featureStatus';
 
 const feature = (over: Partial<Feature> = {}): Feature => ({
   id: 'RDHR-144',
@@ -123,6 +123,33 @@ describe('boardRows', () => {
     expect(boardRows([feature()], new Map(), done)[0].status).toBe('done');
   });
 
+  it('carries what a Feature waits on: a blocked Task is stuck, an unanswered session prompt awaits a decision', () => {
+    const blockedTask: TaskFact = { id: 't1', title: 'Wire the API', status: 'in-progress', tags: ['blocked'], updatedAt: 5 };
+    const tasks = new Map([['RDHR-144', [blockedTask]]]);
+    const [stuck] = boardRows([feature()], tasks, cache(epic()));
+    expect(stuck).toMatchObject({ status: 'in_progress', blocked: true, waiting: [] });
+    expect(stuck.stuck).toEqual([
+      { featureId: 'RDHR-144', kind: 'blocked', title: 'Wire the API', openedAt: 5, taskId: 't1' },
+    ]);
+
+    const asking: SessionFact = { id: 's1', title: 'Rollout', taskId: 't1', status: 'idle', hasPendingPrompt: true, updatedAt: 9 };
+    const [waiting] = boardRows([feature()], tasks, cache(epic()), new Map([['RDHR-144', [asking]]]));
+    expect(waiting).toMatchObject({ status: 'awaiting_decision', blocked: false, stalled: false });
+    expect(waiting.waiting).toEqual([
+      { featureId: 'RDHR-144', kind: 'decision', title: 'Rollout', openedAt: 9, sessionId: 's1', taskId: 't1' },
+    ]);
+  });
+
+  it('reads consulting from a linked session, and stalled from Tasks that nothing runs', () => {
+    const session = (status: string): SessionFact => ({ id: 's1', title: 'S', status, hasPendingPrompt: false, updatedAt: 0 });
+    const withSession = (tasks: TaskFact[], status: string) =>
+      boardRows([feature({ epic: '' })], new Map([['RDHR-144', tasks]]), null, new Map([['RDHR-144', [session(status)]]]))[0];
+    expect(withSession([task('to-do')], 'idle')).toMatchObject({ status: 'consulting', stalled: false });
+    expect(withSession([task('in-progress')], 'idle')).toMatchObject({ status: 'in_progress', stalled: true });
+    expect(withSession([task('in-progress')], 'running')).toMatchObject({ status: 'in_progress', stalled: false });
+    expect(withSession([task('in-progress')], 'error')).toMatchObject({ blocked: true, stuck: [{ kind: 'session_error' }] });
+  });
+
   it('gives Tasks whose featureId matches no Feature file or Epic a row of their own', () => {
     const rows = boardRows([], new Map([['mr-1', [task('to-do')]]]), null);
     expect(rows).toHaveLength(1);
@@ -222,6 +249,11 @@ describe('ago', () => {
     expect(ago(before(24 * 60), now)).toBe('1 d ago');
   });
 
+  it('takes a time in milliseconds too, where 0 means not known', () => {
+    expect(ago(now - 2 * 60 * 60_000, now)).toBe('2 h ago');
+    expect(ago(0, now)).toBe('');
+  });
+
   it('is empty for a time that cannot be read or lies in the future', () => {
     expect(ago('', now)).toBe('');
     expect(ago('yesterday', now)).toBe('');
@@ -260,13 +292,21 @@ describe('loadBoard', () => {
 
   type Reply = string | { success: false; error: string };
   /** A host with these folder listings and file contents; a file not named is absent. */
-  const host = (listings: Record<string, string[]>, files: Record<string, Reply> = {}, items: object[] = []) =>
+  const host = (
+    listings: Record<string, string[]>,
+    files: Record<string, Reply> = {},
+    items: object[] = [],
+    sessions: object[] = [],
+    states: Record<string, object> = {},
+  ) =>
     vi.stubGlobal('window', {
       electronAPI: {
         invoke: async (channel: string, path: string) => {
           if (channel === 'get-folder-contents') {
             return (listings[path] ?? []).map((name) => ({ name, type: 'file', path: `${path}/${name}` }));
           }
+          if (channel === 'sessions:list') return { success: true, sessions };
+          if (channel === 'ai-session-state:get-state') return { success: true, state: states[path] ?? null };
           if (channel !== 'read-file-content') return items;
           const reply = files[path];
           return reply === undefined ? null : typeof reply === 'string' ? { success: true, content: reply } : reply;
@@ -295,6 +335,37 @@ describe('loadBoard', () => {
     expect(Object.fromEntries(features.map((f) => [f.id, f.unreadable]))).toEqual({ ok: undefined, locked: 'EACCES' });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]).toContain('locked.md');
+  });
+
+  it('reads the sessions linked to the Tasks, each with its live state', async () => {
+    const item = (id: string) => ({ id, type: 'feature-task', status: 'in-progress', customFields: { featureId: 'mr-1' } });
+    const session = (id: string, linkedTrackerItemIds: string[], over: object = {}) => ({
+      id,
+      title: `Session ${id}`,
+      updatedAt: 7,
+      linkedTrackerItemIds,
+      ...over,
+    });
+    host(
+      {},
+      {},
+      [item('t1'), item('t2')],
+      [
+        session('asks', ['t1'], { hasPendingInteractivePrompt: true }),
+        session('runs', ['t2', 't1']),
+        session('failed', ['t2']),
+        session('elsewhere', ['other-item']),
+        session('unlinked', []),
+      ],
+      { runs: { status: 'idle', isStreaming: true }, failed: { status: 'error' } },
+    );
+    const { sessions } = await loadBoard(['/ws']);
+    expect([...sessions.keys()]).toEqual(['mr-1']);
+    expect(sessions.get('mr-1')).toEqual([
+      { id: 'asks', title: 'Session asks', taskId: 't1', status: 'idle', hasPendingPrompt: true, updatedAt: 7 },
+      { id: 'runs', title: 'Session runs', taskId: 't2', status: 'running', hasPendingPrompt: false, updatedAt: 7 },
+      { id: 'failed', title: 'Session failed', taskId: 't2', status: 'error', hasPendingPrompt: false, updatedAt: 7 },
+    ]);
   });
 
   it('says when a folder listing came back at the cap of 200 entries', async () => {
