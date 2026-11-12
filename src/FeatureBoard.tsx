@@ -20,10 +20,11 @@ export function FeatureBoard({ host }: PanelHostProps) {
 
   return (
     <div className="feature-board flex h-full flex-col overflow-hidden bg-nim text-nim">
-      <header className="feature-board-header flex items-baseline gap-2 px-4 pt-4">
-        <h1 className="text-base font-semibold">Features</h1>
+      {/* A div, not <header>: the host's global `header h1` rule paints a dark colour and a top margin. */}
+      <div className="feature-board-header flex items-baseline gap-2 px-4 pt-4">
+        <h1 className="text-base font-semibold text-nim">Features</h1>
         {features && <span className="text-xs text-nim-muted">{features.length}</span>}
-      </header>
+      </div>
       <div className="feature-board-body flex-1 overflow-auto p-4">
         {error ? (
           <p className="feature-board-error text-sm text-nim-error select-text">Could not read .features/: {error}</p>

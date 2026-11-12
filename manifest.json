@@ -15,6 +15,7 @@
         "title": "Features",
         "icon": "view_kanban",
         "placement": "fullscreen",
+        "order": -1,
         "tooltip": "Open the Feature board: every Feature in .features/ and what it is waiting on."
       }
     ]
