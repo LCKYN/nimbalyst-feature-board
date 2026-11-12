@@ -68,6 +68,8 @@ describe('Feature file body', () => {
       relatedCode: '- [docs/features/qr.md](../docs/features/qr.md)\n- `backend/app/pay/qr_*.py`',
       decisions: '- 2026-11-12: one QR per invoice.',
     });
+    const ticks = toFeature('/x/a.md', '---\ntitle: T\n---\n## Acceptance criteria\n- [x] a\n- [ ] b\n- [X] c\n')?.criteria;
+    expect(ticks?.map((c) => c.done)).toEqual([true, false, true]);
     // A backfilled file: the section is there and empty.
     const empty = toFeature('/x/RDHR-1.md', '---\ntitle: T\n---\n## Goal\nG\n\n## Acceptance criteria\n\n## Related code\n');
     expect(empty).toMatchObject({ goal: 'G', criteria: [], relatedCode: '', decisions: '' });

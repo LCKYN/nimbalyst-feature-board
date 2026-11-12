@@ -3,6 +3,7 @@ import type { PanelHostProps } from '@nimbalyst/extension-sdk';
 import {
   ago,
   boardRows,
+  criteriaProgress,
   epicUrl,
   isOverdue,
   isStale,
@@ -112,6 +113,7 @@ export function FeatureBoard({ host }: PanelHostProps) {
   const shown = rows?.filter((r) => (filtering ? matches(r, query) : showClosed || !CLOSED.includes(r.status)));
   const hasTasks = shown?.some((r) => r.progress.total > 0) ?? false;
   const hasTarget = shown?.some((r) => r.target) ?? false;
+  const hasCriteria = shown?.some((r) => r.feature?.criteria.length) ?? false;
   const jira = loaded?.jira ?? null;
   // Read on every render, and every load renders, so the age is as fresh as the rows.
   const now = Date.now();
@@ -214,6 +216,7 @@ export function FeatureBoard({ host }: PanelHostProps) {
                   {hasTarget && <th className="px-3 py-2 font-medium">Target</th>}
                   {jira && <th className="px-3 py-2 font-medium">Jira</th>}
                   {jira && <th className="px-3 py-2 font-medium">Labels</th>}
+                  {hasCriteria && <th className="px-3 py-2 font-medium">Criteria</th>}
                   {hasTasks && <th className="px-3 py-2 text-right font-medium">Tasks</th>}
                   {hasTasks && <th className="w-48 px-3 py-2 font-medium">Progress</th>}
                   {hasTasks && <th className="px-3 py-2 font-medium">Open tasks</th>}
@@ -227,6 +230,7 @@ export function FeatureBoard({ host }: PanelHostProps) {
                     hasJira={Boolean(jira)}
                     hasTasks={hasTasks}
                     hasTarget={hasTarget}
+                    hasCriteria={hasCriteria}
                     overdue={isOverdue(row, today)}
                     jiraUrl={epicUrl(loaded!.jiraSite, row.epic?.key)}
                     onOpen={(path) => host.openFile(path)}
@@ -288,6 +292,7 @@ function FeatureRow({
   hasJira,
   hasTasks,
   hasTarget,
+  hasCriteria,
   overdue,
   jiraUrl,
   onOpen,
@@ -298,6 +303,7 @@ function FeatureRow({
   hasJira: boolean;
   hasTasks: boolean;
   hasTarget: boolean;
+  hasCriteria: boolean;
   overdue: boolean;
   /** The Epic's page in Jira, empty when there is no Epic or the site is not known. */
   jiraUrl: string;
@@ -323,6 +329,7 @@ function FeatureRow({
     !feature && 'no Feature file in this checkout',
   ].filter(Boolean);
   const open = feature ? () => onOpen(feature.path) : undefined;
+  const criteria = criteriaProgress(row);
 
   return (
     <tr
@@ -452,6 +459,12 @@ function FeatureRow({
           </span>
         </td>
       )}
+      {hasCriteria && (
+        <td className="feature-row-criteria whitespace-nowrap px-3 py-2 tabular-nums">
+          {criteria && `${criteria.done}/${criteria.total}`}
+          {criteria?.noOpenTask && <div className="mt-0.5 text-xs text-nim-warning">no open Task</div>}
+        </td>
+      )}
       {hasTasks && <td className="feature-row-tasks px-3 py-2 text-right tabular-nums">{total || ''}</td>}
       {hasTasks && (
         <td className="feature-row-done px-3 py-2">
@@ -492,6 +505,7 @@ function RowDetail({ row }: { row: BoardRow }) {
   const taskCount = `Tasks ${progress.done}/${progress.total}`;
   const [summary, ...restOfGoal] = (feature?.goal ?? '').split('\n\n');
   const criteria = feature?.criteria ?? [];
+  const ticked = feature && criteriaProgress(row);
   const heading = 'mt-2 font-medium text-nim';
   return (
     <details
@@ -511,7 +525,7 @@ function RowDetail({ row }: { row: BoardRow }) {
           <>
             <div className={heading}>
               Acceptance criteria{' '}
-              {criteria.length > 0 ? `${criteria.filter((c) => c.done).length}/${criteria.length}` : '· none written'}
+              {ticked ? `${ticked.done}/${ticked.total}` : '· none written'}
             </div>
             {criteria.map((c, i) => (
               <div key={i} className="feature-row-criterion flex gap-1.5">

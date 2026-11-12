@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ago,
   boardRows,
+  criteriaProgress,
   epicUrl,
   isOverdue,
   isStale,
@@ -419,6 +420,29 @@ describe('jiraSite and epicUrl', () => {
     expect(epicUrl(site, 'mr-1')).toBe('');
     expect(epicUrl(site, 'RDHR-144/../../x')).toBe('');
     expect(epicUrl(site, undefined)).toBe('');
+  });
+});
+
+describe('criteriaProgress', () => {
+  const criteria = (...done: boolean[]) => done.map((d, i) => ({ text: `c${i}`, done: d }));
+  const of = (ticks: boolean[], ...statuses: string[]) =>
+    criteriaProgress(
+      boardRows([feature({ criteria: criteria(...ticks) })], new Map([['RDHR-144', statuses.map(task)]]), cache(epic()))[0],
+    );
+
+  it('counts the ticked criteria, and is null for a row that has none', () => {
+    expect(of([true, false, true])).toMatchObject({ done: 2, total: 3 });
+    expect(of([])).toBeNull();
+    expect(criteriaProgress(boardRows([], new Map(), cache(epic()))[0])).toBeNull();
+  });
+
+  it('flags criteria that are open while no Task is', () => {
+    expect(of([true, false])?.noOpenTask).toBe(true);
+    expect(of([true, false], 'done', 'wont-do')?.noOpenTask).toBe(true);
+    expect(of([true, false], 'done', 'to-do')?.noOpenTask).toBe(false);
+    // A status the board does not know still is an open Task.
+    expect(of([true, false], 'completed')?.noOpenTask).toBe(false);
+    expect(of([true, true])?.noOpenTask).toBe(false);
   });
 });
 

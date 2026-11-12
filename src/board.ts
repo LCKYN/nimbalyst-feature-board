@@ -351,6 +351,22 @@ export function matches(row: BoardRow, query: string): boolean {
   return query.toLowerCase().split(/\s+/).every((word) => text.includes(word));
 }
 
+/**
+ * How far a row is by its file's own acceptance criteria, or null when the
+ * file has none. `noOpenTask`: criteria are still unticked and no Task is
+ * open, so nobody is working on what is left.
+ *
+ * ponytail: not the rules' "Still missing" (a criterion no Task covers). A
+ * Task has no field that names a criterion; that takes a new Task field and a
+ * rules change first.
+ */
+export function criteriaProgress(row: BoardRow): { done: number; total: number; noOpenTask: boolean } | null {
+  const criteria = row.feature?.criteria ?? [];
+  if (criteria.length === 0) return null;
+  const done = criteria.filter((c) => c.done).length;
+  return { done, total: criteria.length, noOpenTask: done < criteria.length && row.progress.total === row.progress.done };
+}
+
 /** `YYYY-MM-DD` on the local wall clock. Not `toISOString`, which is UTC and runs hours behind east of Greenwich. */
 export const localDate = (d: Date) =>
   [d.getFullYear(), d.getMonth() + 1, d.getDate()].map((n) => String(n).padStart(2, '0')).join('-');
