@@ -159,7 +159,7 @@ describe('groupTasks', () => {
       ...over,
     });
     const grouped = groupTasks([
-      item('a', { status: 'done', tags: ['blocked'] }),
+      item('a', { status: 'done', tags: ['blocked'], linkedSessions: ['s1', 7, 's2'] }),
       item('b', { customFields: { featureId: 'mr-1' } }),
       item('archived', { archived: true }),
       item('other-type', { type: 'task' }),
@@ -169,8 +169,16 @@ describe('groupTasks', () => {
     expect([...grouped.keys()]).toEqual(['RDHR-144', 'mr-1']);
     expect(grouped.get('mr-1')?.map((t) => t.id)).toEqual(['b', 'padded']);
     expect(grouped.get('RDHR-144')).toEqual([
-      { id: 'a', title: 'a', status: 'done', tags: ['blocked'], updatedAt: Date.parse('2026-11-12T06:11:53.450Z') },
+      {
+        id: 'a',
+        title: 'a',
+        status: 'done',
+        tags: ['blocked'],
+        updatedAt: Date.parse('2026-11-12T06:11:53.450Z'),
+        linkedSessions: ['s1', 's2'],
+      },
     ]);
+    expect(grouped.get('mr-1')?.[0].linkedSessions).toEqual([]);
   });
 
   const item = (id: string, over: object = {}) => ({

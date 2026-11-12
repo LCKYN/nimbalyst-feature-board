@@ -12,6 +12,7 @@ import {
   matches,
   salesList,
   touchesFeatures,
+  usageLine,
   type Board,
   type BoardRow,
 } from './board';
@@ -252,6 +253,7 @@ export function FeatureBoard({ host }: PanelHostProps) {
                     hasTarget={hasTarget}
                     hasCriteria={hasCriteria}
                     overdue={isOverdue(row, today)}
+                    usage={usageLine(row.tasks, loaded!.usage)}
                     jiraUrl={epicUrl(loaded!.jiraSite, row.epic?.key)}
                     onOpen={(path) => host.openFile(path)}
                     onSetStatus={setStatus}
@@ -314,6 +316,7 @@ function FeatureRow({
   hasTarget,
   hasCriteria,
   overdue,
+  usage,
   jiraUrl,
   onOpen,
   onSetStatus,
@@ -325,6 +328,8 @@ function FeatureRow({
   hasTarget: boolean;
   hasCriteria: boolean;
   overdue: boolean;
+  /** "3 sessions · 4.1M tokens · $12.40", empty when no Task links a session. */
+  usage: string;
   /** The Epic's page in Jira, empty when there is no Epic or the site is not known. */
   jiraUrl: string;
   onOpen: (path: string) => void;
@@ -373,7 +378,7 @@ function FeatureRow({
         ) : (
           <span className="feature-row-title text-nim-muted">{row.title}</span>
         )}
-        <RowDetail row={row} />
+        <RowDetail row={row} usage={usage} />
         {meta.length > 0 && <div className="feature-row-meta mt-0.5 text-xs text-nim-muted">{meta.join(' · ')}</div>}
         {feature?.unreadable && (
           <div className="feature-row-unreadable mt-0.5 text-xs text-nim-error">
@@ -516,7 +521,7 @@ function FeatureRow({
  * not rendered (links are text). Move it to a full-width row under the Feature
  * if long criteria feel cramped.
  */
-function RowDetail({ row }: { row: BoardRow }) {
+function RowDetail({ row, usage }: { row: BoardRow; usage: string }) {
   const feature = row.feature?.unreadable ? undefined : row.feature;
   const { tasks, progress } = row;
   // An Epic with no file and no Tasks has nothing to unfold.
@@ -540,6 +545,7 @@ function RowDetail({ row }: { row: BoardRow }) {
         </span>
       </summary>
       <div className="ml-3.5 whitespace-pre-wrap pb-1">
+        {usage && <div className="feature-row-usage mt-1">{usage}</div>}
         {restOfGoal.length > 0 && <div className="feature-row-goal mt-1">{restOfGoal.join('\n\n')}</div>}
         {feature && (
           <>

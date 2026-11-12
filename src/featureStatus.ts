@@ -34,6 +34,8 @@ export interface TaskFact {
   status: string;
   tags: string[];
   updatedAt: number;
+  /** Ids of the AI sessions linked to the Task, as the tracker item lists them. */
+  linkedSessions?: string[];
 }
 
 /** An AI session attributed to the Feature. */

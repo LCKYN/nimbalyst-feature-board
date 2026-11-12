@@ -15,9 +15,10 @@ import {
   readJiraCache,
   salesList,
   touchesFeatures,
+  usageLine,
   type JiraEpic,
 } from '../board';
-import type { Feature } from '../features';
+import type { Feature, SessionUsage } from '../features';
 import type { SessionFact, TaskFact } from '../featureStatus';
 
 const feature = (over: Partial<Feature> = {}): Feature => ({
@@ -474,6 +475,47 @@ describe('localDate', () => {
   });
 });
 
+describe('usageLine', () => {
+  const linked = (...sessions: string[][]): TaskFact[] =>
+    sessions.map((linkedSessions, i) => ({ ...task('to-do'), id: `t${i}`, linkedSessions }));
+  const usage = (rows: Record<string, Partial<SessionUsage>>) =>
+    new Map(Object.entries(rows).map(([id, row]) => [id, { tokens: 0, costUSD: 0, costEstimated: false, ...row }]));
+
+  it('sums tokens and cost over the sessions linked to the Tasks, each session once', () => {
+    const all = usage({
+      a: { tokens: 100, costUSD: 1.25 },
+      b: { tokens: 50, costUSD: 0.5 },
+      c: { tokens: 999, costUSD: 99 },
+    });
+    expect(usageLine(linked(['a'], ['b', 'a']), all)).toBe('2 sessions · 150 tokens · $1.75');
+    expect(usageLine(linked(['a']), all)).toBe('1 session · 100 tokens · $1.25');
+    expect(usageLine(linked(['a']), usage({ a: { tokens: 4_120_000, costUSD: 12.4 } }))).toBe('1 session · 4.1M tokens · $12.40');
+  });
+
+  it('is empty when no Task links a session', () => {
+    expect(usageLine(linked([], []), usage({ a: { tokens: 100, costUSD: 1 } }))).toBe('');
+    expect(usageLine([task('done')], usage({}))).toBe('');
+    expect(usageLine([], null)).toBe('');
+  });
+
+  it('marks a cost the host estimated, and never prints one the host could not price', () => {
+    expect(usageLine(linked(['a', 'b']), usage({ a: { tokens: 10, costUSD: 1 }, b: { tokens: 10, costUSD: 2, costEstimated: true } }))).toBe(
+      '2 sessions · 20 tokens · ~$3.00',
+    );
+    // Tokens and no cost: the host had no price for the model. That is not $0.
+    expect(usageLine(linked(['a', 'b']), usage({ a: { tokens: 10, costUSD: 1 }, b: { tokens: 30 } }))).toBe(
+      '2 sessions · 40 tokens · $1.00 · 1 not priced',
+    );
+    expect(usageLine(linked(['b']), usage({ b: { tokens: 30 } }))).toBe('1 session · 30 tokens · 1 not priced');
+    // A linked session the host has no usage for adds nothing.
+    expect(usageLine(linked(['a', 'gone']), usage({ a: { tokens: 10, costUSD: 1 } }))).toBe('2 sessions · 10 tokens · $1.00');
+  });
+
+  it('says so when the usage could not be read', () => {
+    expect(usageLine(linked(['a', 'b']), null)).toBe('2 sessions · tokens and cost not read');
+  });
+});
+
 describe('salesList', () => {
   it('writes one line per row for sales: title, Jira status, labels, and no key', () => {
     const rows = boardRows(
@@ -607,6 +649,39 @@ describe('loadBoard', () => {
     expect((await loadBoard(['/a', '/b'])).jiraSite).toBe('https://example.atlassian.net');
     host({}, { '/a/CLAUDE.md': 'Jira project: RDDSI\n' });
     expect((await loadBoard(['/a'])).jiraSite).toBe('');
+  });
+
+  it('reads each session\'s tokens and cost, and carries on without them when the host cannot give them', async () => {
+    host({});
+    // The stub answers an unknown channel with the tracker items, which is no usage list.
+    expect((await loadBoard(['/ws'])).usage).toEqual(new Map());
+    vi.stubGlobal('window', {
+      electronAPI: {
+        invoke: async (channel: string) => {
+          if (channel === 'usage-analytics:get-session-breakdown') {
+            return [{ id: 's1', totalTokens: 120.6, costUSD: 0.5, costEstimated: true, title: 'ignored' }, { id: 's2' }];
+          }
+          return channel === 'sessions:list' ? { success: true, sessions: [] } : channel === 'get-folder-contents' ? [] : null;
+        },
+      },
+    });
+    expect((await loadBoard(['/ws'])).usage).toEqual(
+      new Map([
+        ['s1', { tokens: 121, costUSD: 0.5, costEstimated: true }],
+        ['s2', { tokens: 0, costUSD: 0, costEstimated: false }],
+      ]),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('window', {
+      electronAPI: {
+        invoke: async (channel: string) => {
+          if (channel === 'usage-analytics:get-session-breakdown') throw new Error('No handler registered');
+          return channel === 'sessions:list' ? { success: true, sessions: [] } : channel === 'get-folder-contents' ? [] : null;
+        },
+      },
+    });
+    expect((await loadBoard(['/ws'])).usage).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('says when a folder listing came back at the cap of 200 entries', async () => {

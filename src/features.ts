@@ -199,6 +199,9 @@ export function groupTasks(items: any[], workspace?: string): Map<string, TaskFa
       status,
       tags: Array.isArray(item.tags) ? item.tags : [],
       updatedAt: Date.parse(item.updated) || 0,
+      linkedSessions: Array.isArray(item.linkedSessions)
+        ? item.linkedSessions.filter((id: unknown) => typeof id === 'string')
+        : [],
     };
     byFeature.set(featureId, [...(byFeature.get(featureId) ?? []), task]);
   }
@@ -261,4 +264,39 @@ export async function loadSessions(
     byFeature.set(featureId, [...(byFeature.get(featureId) ?? []), fact]);
   }
   return byFeature;
+}
+
+/** What one session used, all time, as the host's AI usage report counts it. */
+export interface SessionUsage {
+  /** Input, cache reads, cache writes and output together. */
+  tokens: number;
+  /** The provider's figure where there is one, the host's price table where not; 0 when the host has no price. */
+  costUSD: number;
+  /** The host took `costUSD` from its price table. */
+  costEstimated: boolean;
+}
+
+/**
+ * Tokens and cost of every session of the workspace, by session id, or null
+ * when the host cannot give them. The board works without: the figures are an
+ * extra, so a host without the channel must not take the board down.
+ */
+export async function loadUsage(workspacePath: string): Promise<Map<string, SessionUsage> | null> {
+  try {
+    const rows = await window.electronAPI.invoke('usage-analytics:get-session-breakdown', workspacePath);
+    if (!Array.isArray(rows)) throw new Error('the reply is not a list');
+    return new Map(
+      rows.map((row: any) => [
+        row.id,
+        {
+          tokens: Math.round(Number(row.totalTokens) || 0),
+          costUSD: Number(row.costUSD) || 0,
+          costEstimated: row.costEstimated === true,
+        },
+      ]),
+    );
+  } catch (e) {
+    console.warn('[feature-board] session usage could not be read:', e);
+    return null;
+  }
 }

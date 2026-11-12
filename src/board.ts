@@ -1,4 +1,4 @@
-import { loadFeatures, loadSessions, loadTasks, type Feature } from './features';
+import { loadFeatures, loadSessions, loadTasks, loadUsage, type Feature, type SessionUsage } from './features';
 import {
   featureStatus,
   STATUS_LABEL,
@@ -121,6 +121,8 @@ export interface Board {
   tasks: Map<string, TaskFact[]>;
   /** The sessions linked to each Feature's Tasks, by Feature id. */
   sessions: Map<string, SessionFact[]>;
+  /** Tokens and cost by session id; null when the host could not give them. */
+  usage: Map<string, SessionUsage> | null;
   jira: JiraCache | null;
   /** Why a `jira-cache.json` is there but could not be read. */
   jiraError: string | undefined;
@@ -142,9 +144,10 @@ export interface Board {
  * repos are ever attached to one workspace.
  */
 export async function loadBoard(folders: string[]): Promise<Board> {
-  const [lists, tasks, reads, claudeMds] = await Promise.all([
+  const [lists, tasks, usage, reads, claudeMds] = await Promise.all([
     Promise.all(folders.map(loadFeatures)),
     loadTasks(folders[0]),
+    loadUsage(folders[0]),
     Promise.all(folders.map(loadJiraCache)),
     Promise.all(folders.map((folder) => window.electronAPI.invoke('read-file-content', `${folder}/CLAUDE.md`))),
   ]);
@@ -165,6 +168,7 @@ export async function loadBoard(folders: string[]): Promise<Board> {
     features,
     tasks,
     sessions,
+    usage,
     jira,
     jiraError,
     // ponytail: one site for the whole workspace, the first one found.
@@ -326,6 +330,38 @@ export function boardRows(
     if (!placed.has(id)) rows.push(row(id, id));
   }
   return rows.sort(byNeed);
+}
+
+const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
+
+/**
+ * What a Feature's work used: "3 sessions · 4.1M tokens · $12.40", summed over
+ * the sessions its Tasks link, each session once. Empty when no Task links a
+ * session. The cost is the host's own figure and nothing else: "~" when the
+ * host estimated part of it, and a session with tokens but no cost is counted
+ * as "not priced", never as $0.
+ *
+ * ponytail: the sessions a Task links, not the child sessions they started.
+ * Walk `sessions:list`'s `parentSessionId` if a workstream's cost is wanted.
+ */
+export function usageLine(tasks: TaskFact[], usage: Map<string, SessionUsage> | null): string {
+  const ids = [...new Set(tasks.flatMap((t) => t.linkedSessions ?? []))];
+  if (ids.length === 0) return '';
+  const count = `${ids.length} ${ids.length === 1 ? 'session' : 'sessions'}`;
+  if (!usage) return `${count} · tokens and cost not read`;
+
+  const rows = ids.flatMap((id) => usage.get(id) ?? []);
+  const priced = rows.filter((r) => r.costUSD > 0);
+  const unpriced = rows.length - priced.length - rows.filter((r) => r.tokens === 0).length;
+  const cost = priced.reduce((sum, r) => sum + r.costUSD, 0);
+  return [
+    count,
+    `${compact.format(rows.reduce((sum, r) => sum + r.tokens, 0))} tokens`,
+    priced.length > 0 && `${priced.some((r) => r.costEstimated) ? '~' : ''}$${cost.toFixed(2)}`,
+    unpriced > 0 && `${unpriced} not priced`,
+  ]
+    .filter(Boolean)
+    .join(' · ');
 }
 
 /** The status as the board prints it: "unknown" when it was computed without a fact it needs. */
