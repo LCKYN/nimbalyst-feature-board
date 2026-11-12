@@ -418,6 +418,52 @@ export function matches(row: BoardRow, query: string): boolean {
   return query.toLowerCase().split(/\s+/).every((word) => text.includes(word));
 }
 
+/** A column the table can be sorted by. */
+export type SortKey = 'title' | 'id' | 'status' | 'target' | 'jira' | 'labels' | 'criteria' | 'tasks' | 'progress' | 'open';
+export interface Sort {
+  key: SortKey;
+  desc: boolean;
+}
+
+const JIRA_ORDER = ['to do', 'in progress', 'done'];
+const ratio = (done: number, total: number) => (total > 0 ? done / total : '');
+
+/** What each column sorts by. `''` means the row has nothing in that column. */
+const SORT_VALUE: Record<SortKey, (row: BoardRow) => string | number> = {
+  title: (r) => r.title,
+  id: (r) => r.id,
+  status: (r) => STATUS_ORDER.indexOf(r.status),
+  target: (r) => r.target,
+  jira: (r) => (r.epic ? JIRA_ORDER.indexOf(r.epic.status.trim().toLowerCase()) : ''),
+  labels: (r) => r.epic?.labels.join(' ') ?? '',
+  criteria: (r) => {
+    const c = criteriaProgress(r);
+    return c ? ratio(c.done, c.total) : '';
+  },
+  tasks: (r) => r.progress.total || '',
+  progress: (r) => ratio(r.progress.done, r.progress.total),
+  open: (r) => r.progress.total - r.progress.done || '',
+};
+
+/**
+ * The rows ordered by one column, as a new list. Rows with nothing in that
+ * column come last in both directions, and equal rows keep the board's own
+ * order (what needs you first). No sort, or a column that no longer exists
+ * (an old stored choice), gives the rows back as they are.
+ */
+export function sortRows(rows: BoardRow[], sort: Sort | null): BoardRow[] {
+  const value = sort && SORT_VALUE[sort.key];
+  if (!value) return rows;
+  const direction = sort.desc ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const x = value(a);
+    const y = value(b);
+    if (x === '' || y === '') return Number(x === '') - Number(y === '') || byNeed(a, b);
+    const order = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true });
+    return direction * order || byNeed(a, b);
+  });
+}
+
 /**
  * How far a row is by its file's own acceptance criteria, or null when the
  * file has none. `noOpenTask`: criteria are still unticked and no Task is

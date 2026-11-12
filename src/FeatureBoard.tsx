@@ -11,11 +11,14 @@ import {
   localDate,
   matches,
   salesList,
+  sortRows,
   touchesFeatures,
   trailing,
   usageLine,
   type Board,
   type BoardRow,
+  type Sort,
+  type SortKey,
 } from './board';
 import { sortTasks, STATUS_LABEL, type FeatureStatus, type WaitItem } from './featureStatus';
 
@@ -56,6 +59,14 @@ export function FeatureBoard({ host }: PanelHostProps) {
     void host.storage.set('statusOverride', next);
   };
   const [query, setQuery] = useState('');
+  // Kept in storage for the same reason as `showClosed`. Null is the board's own order: what needs you first.
+  const [sort, setSort] = useState<Sort | null>(() => host.storage.get<Sort>('sort') ?? null);
+  // One header click sorts up, the next down, the third goes back to the board's own order.
+  const toggleSort = (key: SortKey) => {
+    const next = sort?.key !== key ? { key, desc: false } : sort.desc ? null : { key, desc: true };
+    setSort(next);
+    void host.storage.set('sort', next);
+  };
   const [copied, setCopied] = useState(false);
   const [reloads, setReloads] = useState(0);
   const reload = () => setReloads((n) => n + 1);
@@ -118,7 +129,8 @@ export function FeatureBoard({ host }: PanelHostProps) {
   const closedCount = rows?.filter((r) => CLOSED.includes(r.status)).length ?? 0;
   const filtering = query.trim() !== '';
   // A filter searches the closed rows too: "prod" must find what already shipped.
-  const shown = rows?.filter((r) => (filtering ? matches(r, query) : showClosed || !CLOSED.includes(r.status)));
+  const filtered = rows?.filter((r) => (filtering ? matches(r, query) : showClosed || !CLOSED.includes(r.status)));
+  const shown = filtered && sortRows(filtered, sort);
   // The SDK's helper, not `navigator.clipboard`, which can fail without a sign in Electron.
   const copyList = () =>
     copyToClipboard(salesList(shown ?? [])).then(
@@ -132,6 +144,20 @@ export function FeatureBoard({ host }: PanelHostProps) {
   const hasTarget = shown?.some((r) => r.target) ?? false;
   const hasCriteria = shown?.some((r) => r.feature?.criteria.length) ?? false;
   const jira = loaded?.jira ?? null;
+  const columns = (
+    [
+      ['title', 'Feature'],
+      ['id', 'ID'],
+      ['status', 'Status'],
+      hasTarget && ['target', 'Target'],
+      jira && ['jira', 'Jira'],
+      jira && ['labels', 'Labels'],
+      hasCriteria && ['criteria', 'Criteria'],
+      hasTasks && ['tasks', 'Tasks', 'text-right'],
+      hasTasks && ['progress', 'Progress', 'w-48'],
+      hasTasks && ['open', 'Open tasks'],
+    ] as (false | null | [SortKey, string, string?])[]
+  ).filter((c): c is [SortKey, string, string?] => Boolean(c));
   // Read on every render, and every load renders, so the age is as fresh as the rows.
   const now = Date.now();
   const today = localDate(new Date(now));
@@ -173,8 +199,8 @@ export function FeatureBoard({ host }: PanelHostProps) {
         <input
           type="search"
           className="feature-board-filter w-48 rounded border border-nim bg-transparent px-2 py-0.5 text-xs text-nim"
-          placeholder="Filter: title, id, label, status"
-          aria-label="Filter the Features"
+          placeholder="Search title, id, label, status"
+          aria-label="Search the Features by title, id, label or status"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -236,16 +262,23 @@ export function FeatureBoard({ host }: PanelHostProps) {
             <table className="feature-board-table w-full border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b border-nim text-xs text-nim-muted">
-                  <th className="px-3 py-2 font-medium">Feature</th>
-                  <th className="px-3 py-2 font-medium">ID</th>
-                  <th className="px-3 py-2 font-medium">Status</th>
-                  {hasTarget && <th className="px-3 py-2 font-medium">Target</th>}
-                  {jira && <th className="px-3 py-2 font-medium">Jira</th>}
-                  {jira && <th className="px-3 py-2 font-medium">Labels</th>}
-                  {hasCriteria && <th className="px-3 py-2 font-medium">Criteria</th>}
-                  {hasTasks && <th className="px-3 py-2 text-right font-medium">Tasks</th>}
-                  {hasTasks && <th className="w-48 px-3 py-2 font-medium">Progress</th>}
-                  {hasTasks && <th className="px-3 py-2 font-medium">Open tasks</th>}
+                  {columns.map(([key, label, className = '']) => {
+                    const sorted = sort?.key === key ? (sort.desc ? 'descending' : 'ascending') : undefined;
+                    return (
+                      <th key={key} className={`px-3 py-2 font-medium ${className}`} aria-sort={sorted}>
+                        {/* A button, so a header can be reached and pressed from the keyboard. */}
+                        <button
+                          type="button"
+                          className="feature-board-sort font-medium hover:underline"
+                          title={`Sort by ${label}`}
+                          onClick={() => toggleSort(key)}
+                        >
+                          {label}
+                          {sorted && (sorted === 'descending' ? ' ▼' : ' ▲')}
+                        </button>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>

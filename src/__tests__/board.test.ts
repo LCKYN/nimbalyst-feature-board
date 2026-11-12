@@ -14,10 +14,12 @@ import {
   parseJiraCache,
   readJiraCache,
   salesList,
+  sortRows,
   touchesFeatures,
   trailing,
   usageLine,
   type JiraEpic,
+  type SortKey,
 } from '../board';
 import type { Feature, SessionUsage } from '../features';
 import type { SessionFact, TaskFact } from '../featureStatus';
@@ -400,6 +402,60 @@ describe('matches', () => {
     expect(ids('demo prod')).toEqual(['A-1']);
     expect(ids('demo payroll')).toEqual(['A-2']);
     expect(ids('demo nothing')).toEqual([]);
+  });
+});
+
+describe('sortRows', () => {
+  const rows = boardRows(
+    [
+      feature({ id: 'A-1', epic: 'A-1', title: 'Recruit on LINE', target: '2026-12-15' }),
+      feature({ id: 'A-10', epic: 'A-10', title: 'Mobile app' }),
+      feature({ id: 'A-2', epic: 'A-2', title: 'payroll', target: '2026-11-05' }),
+    ],
+    new Map([
+      ['A-1', [task('done'), task('to-do')]],
+      ['A-10', [task('done')]],
+    ]),
+    cache(
+      epic({ key: 'A-1', status: 'In Progress', labels: ['prod'] }),
+      epic({ key: 'A-10', status: 'Done', labels: ['demo'] }),
+      epic({ key: 'A-2', status: 'To Do' }),
+    ),
+  );
+  const ids = (key: SortKey, desc = false) =>
+    sortRows(rows, { key, desc }).map((r) => r.id);
+
+  it('leaves the board order alone without a sort, or with one it does not know', () => {
+    expect(sortRows(rows, null)).toBe(rows);
+    expect(sortRows(rows, { key: 'gone' as never, desc: false })).toBe(rows);
+  });
+
+  it('sorts text without regard to case, and ids by their number', () => {
+    expect(ids('title')).toEqual(['A-10', 'A-2', 'A-1']);
+    expect(ids('title', true)).toEqual(['A-1', 'A-2', 'A-10']);
+    expect(ids('id')).toEqual(['A-1', 'A-2', 'A-10']);
+  });
+
+  it('sorts the Jira status in workflow order, not by the alphabet', () => {
+    expect(ids('jira')).toEqual(['A-2', 'A-1', 'A-10']);
+  });
+
+  it('sorts counts as numbers', () => {
+    expect(ids('tasks', true)).toEqual(['A-1', 'A-10', 'A-2']);
+    expect(ids('progress', true)).toEqual(['A-10', 'A-1', 'A-2']);
+  });
+
+  it('keeps rows without a value last in both directions', () => {
+    expect(ids('target')).toEqual(['A-2', 'A-1', 'A-10']);
+    expect(ids('target', true)).toEqual(['A-1', 'A-2', 'A-10']);
+    expect(ids('labels')).toEqual(['A-10', 'A-1', 'A-2']);
+    expect(ids('labels', true)).toEqual(['A-1', 'A-10', 'A-2']);
+  });
+
+  it('does not reorder the rows it was given', () => {
+    const before = rows.map((r) => r.id);
+    sortRows(rows, { key: 'title', desc: false });
+    expect(rows.map((r) => r.id)).toEqual(before);
   });
 });
 
