@@ -274,6 +274,42 @@ export interface SessionUsage {
   costUSD: number;
   /** The host took `costUSD` from its price table. */
   costEstimated: boolean;
+  /** How long the session's finished turns ran, prompt to last reply. Unset when it was not read. */
+  workMs?: number;
+}
+
+/** The session's working time: its finished turns, each from the prompt to the last reply. Waiting on the user is not in it. */
+const workTime = (turns: any[]) =>
+  turns.reduce((ms: number, t) => ms + (t?.endedAt > t?.startedAt ? t.endedAt - t.startedAt : 0), 0);
+
+/** The last answer per session, with the token count it was read at: no new tokens, no new turn. */
+const workTimes = new Map<string, { tokens: number; ms: number }>();
+
+/**
+ * Fills `workMs` on the usage rows of the given sessions. A session whose
+ * turns cannot be read keeps none, so its time is left out and not guessed.
+ *
+ * ponytail: one host call per linked session whose token count moved, and the
+ * host rereads that session's messages for it. Ask for the turns only when a
+ * row's detail is unfolded if a Feature ever links sessions by the dozen.
+ */
+export async function loadWorkTime(usage: Map<string, SessionUsage> | null, sessionIds: string[]): Promise<void> {
+  const reads = await Promise.allSettled(
+    sessionIds.map(async (id) => {
+      const row = usage?.get(id);
+      if (!row || row.tokens === 0) return;
+      let known = workTimes.get(id);
+      if (known?.tokens !== row.tokens) {
+        const turns = await window.electronAPI.invoke('usage-analytics:get-session-turns', id);
+        if (!Array.isArray(turns)) throw new Error('the reply is not a list');
+        known = { tokens: row.tokens, ms: workTime(turns) };
+        workTimes.set(id, known);
+      }
+      row.workMs = known.ms;
+    }),
+  );
+  const failed = reads.find((r): r is PromiseRejectedResult => r.status === 'rejected');
+  if (failed) console.warn('[feature-board] session working time could not be read:', failed.reason);
 }
 
 /**

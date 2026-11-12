@@ -1,4 +1,4 @@
-import { loadFeatures, loadSessions, loadTasks, loadUsage, type Feature, type SessionUsage } from './features';
+import { loadFeatures, loadSessions, loadTasks, loadUsage, loadWorkTime, type Feature, type SessionUsage } from './features';
 import {
   featureStatus,
   STATUS_LABEL,
@@ -169,7 +169,8 @@ export async function loadBoard(folders: string[]): Promise<Board> {
     Promise.all(folders.map(loadJiraCache)),
     Promise.all(folders.map((folder) => window.electronAPI.invoke('read-file-content', `${folder}/CLAUDE.md`))),
   ]);
-  const sessions = await loadSessions(folders[0], tasks);
+  const linked = [...new Set([...tasks.values()].flat().flatMap((t) => t.linkedSessions ?? []))];
+  const [sessions] = await Promise.all([loadSessions(folders[0], tasks), loadWorkTime(usage, linked)]);
   const features = lists.flatMap((l) => l.features);
   const caches = reads.flatMap((r) => r.cache ?? []);
   const jira = caches.length > 0
@@ -352,12 +353,21 @@ export function boardRows(
 
 const compact = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 });
 
+/** "<1 min", "23 min", "2 h 5 min". */
+export function duration(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  if (minutes < 1) return '<1 min';
+  const rest = minutes % 60;
+  return [minutes >= 60 && `${Math.floor(minutes / 60)} h`, rest > 0 && `${rest} min`].filter(Boolean).join(' ');
+}
+
 /**
- * What a Feature's work used: "3 sessions · 4.1M tokens · $12.40", summed over
- * the sessions its Tasks link, each session once. Empty when no Task links a
- * session. The cost is the host's own figure and nothing else: "~" when the
- * host estimated part of it, and a session with tokens but no cost is counted
- * as "not priced", never as $0.
+ * What a Feature's work used: "3 sessions · 4.1M tokens · $12.40 · 2 h 5 min",
+ * summed over the sessions its Tasks link, each session once; pass one Task for
+ * that Task's share. Empty when no Task links a session. The cost is the host's
+ * own figure and nothing else: "~" when the host estimated part of it, and a
+ * session with tokens but no cost is counted as "not priced", never as $0. The
+ * time is how long the sessions' finished turns ran, not how long anyone waited.
  *
  * ponytail: the sessions a Task links, not the child sessions they started.
  * Walk `sessions:list`'s `parentSessionId` if a workstream's cost is wanted.
@@ -372,10 +382,14 @@ export function usageLine(tasks: TaskFact[], usage: Map<string, SessionUsage> | 
   const priced = rows.filter((r) => r.costUSD > 0);
   const unpriced = rows.length - priced.length - rows.filter((r) => r.tokens === 0).length;
   const cost = priced.reduce((sum, r) => sum + r.costUSD, 0);
+  // Only when it is known for every session that ran: a part would read as the whole.
+  const ran = rows.filter((r) => r.tokens > 0);
+  const work = ran.every((r) => r.workMs !== undefined) ? ran.reduce((sum, r) => sum + (r.workMs ?? 0), 0) : 0;
   return [
     count,
     `${compact.format(rows.reduce((sum, r) => sum + r.tokens, 0))} tokens`,
     priced.length > 0 && `${priced.some((r) => r.costEstimated) ? '~' : ''}$${cost.toFixed(2)}`,
+    work > 0 && duration(work),
     unpriced > 0 && `${unpriced} not priced`,
   ]
     .filter(Boolean)

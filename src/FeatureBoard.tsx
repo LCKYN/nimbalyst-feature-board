@@ -291,7 +291,7 @@ export function FeatureBoard({ host }: PanelHostProps) {
                     hasTarget={hasTarget}
                     hasCriteria={hasCriteria}
                     overdue={isOverdue(row, today)}
-                    usage={usageLine(row.tasks, loaded!.usage)}
+                    usage={loaded!.usage}
                     jiraUrl={epicUrl(loaded!.jiraSite, row.epic?.key)}
                     onOpen={(path) => host.openFile(path)}
                     onSetStatus={setStatus}
@@ -366,8 +366,8 @@ function FeatureRow({
   hasTarget: boolean;
   hasCriteria: boolean;
   overdue: boolean;
-  /** "3 sessions · 4.1M tokens · $12.40", empty when no Task links a session. */
-  usage: string;
+  /** Tokens, cost and working time by session id; null when the host could not give them. */
+  usage: Board['usage'];
   /** The Epic's page in Jira, empty when there is no Epic or the site is not known. */
   jiraUrl: string;
   onOpen: (path: string) => void;
@@ -559,13 +559,15 @@ function FeatureRow({
  * not rendered (links are text). Move it to a full-width row under the Feature
  * if long criteria feel cramped.
  */
-function RowDetail({ row, usage }: { row: BoardRow; usage: string }) {
+function RowDetail({ row, usage }: { row: BoardRow; usage: Board['usage'] }) {
   const feature = row.feature?.unreadable ? undefined : row.feature;
   const { tasks, progress } = row;
   // An Epic with no file and no Tasks has nothing to unfold.
   if (!feature && tasks.length === 0) return null;
 
   const taskCount = `Tasks ${progress.done}/${progress.total}`;
+  // "3 sessions · 4.1M tokens · $12.40 · 2 h 5 min", empty when no Task links a session.
+  const total = usageLine(tasks, usage);
   const [summary, ...restOfGoal] = (feature?.goal ?? '').split('\n\n');
   const criteria = feature?.criteria ?? [];
   const ticked = feature && criteriaProgress(row);
@@ -583,7 +585,7 @@ function RowDetail({ row, usage }: { row: BoardRow; usage: string }) {
         </span>
       </summary>
       <div className="ml-3.5 whitespace-pre-wrap pb-1">
-        {usage && <div className="feature-row-usage mt-1">{usage}</div>}
+        {total && <div className="feature-row-usage mt-1">{total}</div>}
         {restOfGoal.length > 0 && <div className="feature-row-goal mt-1">{restOfGoal.join('\n\n')}</div>}
         {feature && (
           <>
@@ -604,17 +606,23 @@ function RowDetail({ row, usage }: { row: BoardRow; usage: string }) {
           </>
         )}
         <div className={heading}>{tasks.length > 0 ? taskCount : 'Tasks · none'}</div>
-        {sortTasks(tasks).map((task) => (
-          <div key={task.id} className="feature-row-task flex gap-2">
-            <span className="w-20 shrink-0">{task.status.replace(/-/g, ' ')}</span>
-            <span>
-              {task.title}
-              {task.tags.includes('blocked') && task.status !== 'done' && task.status !== 'wont-do' && (
-                <span className="text-nim-error"> blocked</span>
-              )}
-            </span>
-          </div>
-        ))}
+        {sortTasks(tasks).map((task) => {
+          // The same line as the Feature's, for this Task's sessions alone. A
+          // session two Tasks link counts under both, so these do not add up to the total.
+          const used = usageLine([task], usage);
+          return (
+            <div key={task.id} className="feature-row-task flex gap-2">
+              <span className="w-20 shrink-0">{task.status.replace(/-/g, ' ')}</span>
+              <span>
+                {task.title}
+                {task.tags.includes('blocked') && task.status !== 'done' && task.status !== 'wont-do' && (
+                  <span className="text-nim-error"> blocked</span>
+                )}
+                {used && <span className="feature-row-task-usage tabular-nums"> — {used}</span>}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </details>
   );

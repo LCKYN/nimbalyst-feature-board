@@ -3,6 +3,7 @@ import {
   ago,
   boardRows,
   criteriaProgress,
+  duration,
   epicUrl,
   isOverdue,
   isStale,
@@ -571,6 +572,39 @@ describe('usageLine', () => {
   it('says so when the usage could not be read', () => {
     expect(usageLine(linked(['a', 'b']), null)).toBe('2 sessions · tokens and cost not read');
   });
+
+  it('adds the time the sessions worked, for one Task as for a whole Feature', () => {
+    const all = usage({
+      a: { tokens: 100, costUSD: 1.25, workMs: 23 * 60_000 },
+      b: { tokens: 50, costUSD: 0.5, workMs: 45 * 60_000 },
+    });
+    const [first, second] = linked(['a'], ['b', 'a']);
+    expect(usageLine([first], all)).toBe('1 session · 100 tokens · $1.25 · 23 min');
+    expect(usageLine([second], all)).toBe('2 sessions · 150 tokens · $1.75 · 1 h 8 min');
+    expect(usageLine([first, second], all)).toBe('2 sessions · 150 tokens · $1.75 · 1 h 8 min');
+  });
+
+  it('leaves the time out when it is not known for every session that ran, so it never reads too low', () => {
+    const partial = usage({ a: { tokens: 100, costUSD: 1, workMs: 60_000 }, b: { tokens: 50, costUSD: 1 } });
+    expect(usageLine(linked(['a', 'b']), partial)).toBe('2 sessions · 150 tokens · $2.00');
+    // A session that never used a token has no time to miss.
+    expect(usageLine(linked(['a', 'idle']), usage({ a: { tokens: 100, costUSD: 1, workMs: 60_000 }, idle: {} }))).toBe(
+      '2 sessions · 100 tokens · $1.00 · 1 min',
+    );
+    // No finished turn yet: nothing to print.
+    expect(usageLine(linked(['a']), usage({ a: { tokens: 100, costUSD: 1, workMs: 0 } }))).toBe('1 session · 100 tokens · $1.00');
+  });
+});
+
+describe('duration', () => {
+  it('prints minutes, then hours and minutes', () => {
+    expect(duration(20_000)).toBe('<1 min');
+    expect(duration(90_000)).toBe('2 min');
+    expect(duration(59 * 60_000)).toBe('59 min');
+    expect(duration(60 * 60_000)).toBe('1 h');
+    expect(duration(125 * 60_000)).toBe('2 h 5 min');
+    expect(duration(26 * 60 * 60_000)).toBe('26 h');
+  });
 });
 
 describe('salesList', () => {
@@ -770,6 +804,59 @@ describe('loadBoard', () => {
       },
     });
     expect((await loadBoard(['/ws'])).usage).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the working time of the sessions a Task links, once per session until it has used more tokens', async () => {
+    const asked: string[] = [];
+    let tokens = 100;
+    vi.stubGlobal('window', {
+      electronAPI: {
+        invoke: async (channel: string, arg: string) => {
+          if (channel === 'document-service:tracker-items-list') {
+            return [{ id: 't1', type: 'feature-task', customFields: { featureId: 'mr-1' }, linkedSessions: ['s1', 'gone'] }];
+          }
+          if (channel === 'usage-analytics:get-session-breakdown') {
+            return [{ id: 's1', totalTokens: tokens, costUSD: 1 }, { id: 'unlinked', totalTokens: 5, costUSD: 1 }];
+          }
+          if (channel === 'usage-analytics:get-session-turns') {
+            asked.push(arg);
+            // Two finished turns of 10 and 5 minutes, and one that never finished.
+            return [
+              { startedAt: 0, endedAt: 600_000 },
+              { startedAt: 900_000, endedAt: 1_200_000 },
+              { startedAt: 2_000_000, endedAt: null },
+            ];
+          }
+          return channel === 'sessions:list' ? { success: true, sessions: [] } : channel === 'get-folder-contents' ? [] : null;
+        },
+      },
+    });
+    expect((await loadBoard(['/ws'])).usage?.get('s1')?.workMs).toBe(900_000);
+    expect((await loadBoard(['/ws'])).usage?.get('unlinked')?.workMs).toBeUndefined();
+    expect(asked).toEqual(['s1']);
+    tokens = 200;
+    await loadBoard(['/ws']);
+    expect(asked).toEqual(['s1', 's1']);
+  });
+
+  it('shows no time, and still the cost, when the host cannot list a session\'s turns', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.stubGlobal('window', {
+      electronAPI: {
+        invoke: async (channel: string) => {
+          if (channel === 'document-service:tracker-items-list') {
+            return [{ id: 't1', type: 'feature-task', customFields: { featureId: 'mr-1' }, linkedSessions: ['s9'] }];
+          }
+          if (channel === 'usage-analytics:get-session-breakdown') return [{ id: 's9', totalTokens: 100, costUSD: 1 }];
+          if (channel === 'usage-analytics:get-session-turns') throw new Error('No handler registered');
+          return channel === 'sessions:list' ? { success: true, sessions: [] } : channel === 'get-folder-contents' ? [] : null;
+        },
+      },
+    });
+    const { usage, tasks } = await loadBoard(['/ws']);
+    expect(usage?.get('s9')).toEqual({ tokens: 100, costUSD: 1, costEstimated: false });
+    expect(usageLine(tasks.get('mr-1')!, usage)).toBe('1 session · 100 tokens · $1.00');
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
