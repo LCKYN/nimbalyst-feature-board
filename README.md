@@ -11,6 +11,10 @@ A [Nimbalyst](https://github.com/nimbalyst/nimbalyst) extension that adds a full
 - **The main checkout's workspace.** The Jira cache and the Tasks are kept with the repo's main checkout. A worktree opened as its own project shows its Feature files without Jira status or Tasks, and the board says so.
 - **Up to 200 entries of `.features/`**, which is where the host cuts a folder listing. The board says when a listing came back at that cap.
 
+## Finding a Feature
+
+The filter box looks for every word you type in a row's title, id, kind, labels, Jira status and shown status, and it searches the closed rows too: `prod` lists what can be sold, `demo` what can be shown. A label on a row puts itself in the box.
+
 ## Staying current
 
 The board reloads when a Task changes, when a file in `.features/` changes, when the window gets the focus back, and from its Refresh button. A rewritten Jira cache is seen through the file event only while it is not in `.gitignore` (the host's watcher skips gitignored changes); after that, focus and Refresh pick it up. The board does not listen for session changes yet, so a session that starts to wait for an answer shows on the next of those reloads.

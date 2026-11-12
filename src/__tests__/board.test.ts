@@ -5,6 +5,7 @@ import {
   isStale,
   isWorktreeGitFile,
   loadBoard,
+  matches,
   parseJiraCache,
   readJiraCache,
   touchesFeatures,
@@ -288,6 +289,46 @@ describe('isStale', () => {
     expect(isStale('2026-11-01T00:00:00Z', now)).toBe(true);
     expect(isStale('', now)).toBe(true);
     expect(isStale('2026-11-12T07:00:00Z', now)).toBe(true);
+  });
+});
+
+describe('matches', () => {
+  const rows = boardRows(
+    [feature({ id: 'A-1', epic: 'A-1', title: 'Recruit on LINE', kind: 'change' }), feature({ id: 'ISF-99', epic: 'ISF-99' })],
+    new Map(),
+    cache(
+      epic({ key: 'A-1', labels: ['demo', 'prod'] }),
+      epic({ key: 'A-2', title: 'Payroll', labels: ['demo'], status: 'Done' }),
+      epic({ key: 'A-3', title: 'Org sync', labels: [], status: 'To Do' }),
+    ),
+  );
+  const ids = (query: string) => rows.filter((r) => matches(r, query)).map((r) => r.id);
+
+  it('keeps every row for an empty query', () => {
+    expect(ids('')).toHaveLength(4);
+    expect(ids('   ')).toHaveLength(4);
+  });
+
+  it('looks in the labels, the title, the id and the kind, whatever the case', () => {
+    expect(ids('prod')).toEqual(['A-1']);
+    expect(ids('DEMO')).toEqual(['A-1', 'A-2']);
+    expect(ids('payroll')).toEqual(['A-2']);
+    expect(ids('a-3')).toEqual(['A-3']);
+    expect(ids('change')).toEqual(['A-1']);
+  });
+
+  it('looks in the Jira status and in the status label the row shows, done rows included', () => {
+    expect(ids('to do')).toEqual(['A-3']);
+    expect(ids('เสร็จแล้ว')).toEqual(['A-2']);
+    // A row that shows "unknown" is found by that word, not by the status it does not show.
+    expect(ids('unknown')).toEqual(['ISF-99']);
+    expect(ids('จะทำ')).toEqual(['A-3']);
+  });
+
+  it('needs every word of the query', () => {
+    expect(ids('demo prod')).toEqual(['A-1']);
+    expect(ids('demo payroll')).toEqual(['A-2']);
+    expect(ids('demo nothing')).toEqual([]);
   });
 });
 

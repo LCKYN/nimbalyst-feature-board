@@ -287,6 +287,29 @@ export function boardRows(
   return rows.sort(byId);
 }
 
+/**
+ * Whether a row has every word of `query` somewhere in its title, id, kind,
+ * labels, Jira status or the status the board shows for it. An empty query
+ * matches every row.
+ *
+ * ponytail: plain substrings, so a title that contains a label word ("Demo
+ * mode") is found by `demo` too. Offer the labels as an exact-match list if
+ * that ever gives a wrong hit.
+ */
+export function matches(row: BoardRow, query: string): boolean {
+  const text = [
+    row.title,
+    row.id,
+    row.feature?.kind,
+    ...(row.epic?.labels ?? []),
+    row.epic?.status,
+    row.unknown ? 'unknown' : STATUS_LABEL[row.status],
+  ]
+    .join(' ')
+    .toLowerCase();
+  return query.toLowerCase().split(/\s+/).every((word) => text.includes(word));
+}
+
 /** A Jira read older than a day, or at a time `ago()` cannot tell, may no longer match Jira. */
 export function isStale(iso: string, now: number): boolean {
   const age = now - Date.parse(iso);

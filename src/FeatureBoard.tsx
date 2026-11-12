@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { PanelHostProps } from '@nimbalyst/extension-sdk';
-import { ago, boardRows, isStale, loadBoard, touchesFeatures, type Board, type BoardRow } from './board';
+import { ago, boardRows, isStale, loadBoard, matches, touchesFeatures, type Board, type BoardRow } from './board';
 import { sortTasks, STATUS_LABEL, type FeatureStatus, type WaitItem } from './featureStatus';
 
 const CLOSED: FeatureStatus[] = ['done', 'cancelled'];
@@ -39,6 +39,7 @@ export function FeatureBoard({ host }: PanelHostProps) {
     setOverrides(next);
     void host.storage.set('statusOverride', next);
   };
+  const [query, setQuery] = useState('');
   const [reloads, setReloads] = useState(0);
   const reload = () => setReloads((n) => n + 1);
 
@@ -94,7 +95,9 @@ export function FeatureBoard({ host }: PanelHostProps) {
       new CustomEvent('open-ai-session', { detail: { sessionId, workspacePath: host.workspacePath } }),
     );
   const closedCount = rows?.filter((r) => CLOSED.includes(r.status)).length ?? 0;
-  const shown = rows?.filter((r) => showClosed || !CLOSED.includes(r.status));
+  const filtering = query.trim() !== '';
+  // A filter searches the closed rows too: "prod" must find what already shipped.
+  const shown = rows?.filter((r) => (filtering ? matches(r, query) : showClosed || !CLOSED.includes(r.status)));
   const hasTasks = shown?.some((r) => r.progress.total > 0) ?? false;
   const jira = loaded?.jira ?? null;
   // Read on every render, and every load renders, so the age is as fresh as the rows.
@@ -123,6 +126,8 @@ export function FeatureBoard({ host }: PanelHostProps) {
           <label className="feature-board-show-closed flex cursor-pointer items-center gap-1.5 text-xs text-nim-muted">
             <input
               type="checkbox"
+              // A filter lists closed rows whatever this says.
+              disabled={filtering}
               checked={showClosed}
               onChange={(e) => {
                 setShowClosed(e.target.checked);
@@ -132,6 +137,14 @@ export function FeatureBoard({ host }: PanelHostProps) {
             Show {CLOSED_LABEL} ({closedCount})
           </label>
         )}
+        <input
+          type="search"
+          className="feature-board-filter w-48 rounded border border-nim bg-transparent px-2 py-0.5 text-xs text-nim"
+          placeholder="Filter: title, id, label, status"
+          aria-label="Filter the Features"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
         <button type="button" className="feature-board-refresh text-xs text-nim-muted hover:underline" onClick={reload}>
           Refresh
         </button>
@@ -163,6 +176,8 @@ export function FeatureBoard({ host }: PanelHostProps) {
             No Feature files found in <code>{folders.map((folder) => `${folder}/.features/`).join(', ')}</code> (the
             folder is missing, empty or could not be read).
           </p>
+        ) : shown.length === 0 && filtering ? (
+          <p className="feature-board-no-match text-sm text-nim-muted">No Feature matches “{query.trim()}”.</p>
         ) : shown.length === 0 ? (
           <p className="feature-board-all-closed text-sm text-nim-muted">
             All {closedCount} Features are closed ({CLOSED_LABEL}). Tick “Show {CLOSED_LABEL}” to list them.
@@ -198,6 +213,7 @@ export function FeatureBoard({ host }: PanelHostProps) {
                     hasTasks={hasTasks}
                     onOpen={(path) => host.openFile(path)}
                     onSetStatus={setStatus}
+                    onFilter={setQuery}
                   />
                 ))}
               </tbody>
@@ -255,6 +271,7 @@ function FeatureRow({
   hasTasks,
   onOpen,
   onSetStatus,
+  onFilter,
 }: {
   row: BoardRow;
   hasJira: boolean;
@@ -262,6 +279,7 @@ function FeatureRow({
   onOpen: (path: string) => void;
   /** An empty status clears the hand-set one. */
   onSetStatus: (id: string, status: string) => void;
+  onFilter: (query: string) => void;
 }) {
   const { feature, epic, progress } = row;
   const { total, done } = progress;
@@ -370,9 +388,18 @@ function FeatureRow({
         <td className="feature-row-labels px-3 py-2">
           <span className="flex flex-wrap gap-1">
             {epic?.labels.map((label) => (
-              <span key={label} className="rounded bg-nim-tertiary px-1.5 py-0.5 text-xs text-nim-muted">
+              <button
+                key={label}
+                type="button"
+                className="rounded bg-nim-tertiary px-1.5 py-0.5 text-xs text-nim-muted hover:underline"
+                title={`Show the Features labelled ${label}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onFilter(label);
+                }}
+              >
                 {label}
-              </span>
+              </button>
             ))}
           </span>
         </td>
