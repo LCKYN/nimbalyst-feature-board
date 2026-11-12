@@ -1,6 +1,7 @@
 import { loadFeatures, loadSessions, loadTasks, type Feature } from './features';
 import {
   featureStatus,
+  STATUS_LABEL,
   taskProgress,
   waitItems,
   type FeatureFacts,
@@ -154,7 +155,10 @@ export interface BoardRow {
   /** The Tasks that name this row's id. */
   tasks: TaskFact[];
   progress: TaskProgress;
+  /** The computed status, or the one the user set by hand on the board. */
   status: FeatureStatus;
+  /** `status` was set by hand. `blocked`, `stalled` and the wait lists stay computed. */
+  handSet: boolean;
   blocked: boolean;
   stalled: boolean;
   /** What needs an answer from the user, and what cannot move on its own. */
@@ -168,7 +172,7 @@ export interface BoardRow {
    */
   mrStateUnknown: boolean;
   /**
-   * Set when `status` was computed without a fact it needs, so the board says
+   * Set when `status` was computed (not set by hand) without a fact it needs, so the board says
    * "unknown" in its place: the Feature names an Epic the cache does not hold,
    * or it lists MRs and nothing open (Task, card, Jira In Progress, a session's question) explains its status.
    */
@@ -190,16 +194,16 @@ const byId = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id, 
  * permission, which lets this read-only panel run shell commands. That is the
  * owner's decision. Pass both facts in here once the board gathers them.
  *
- * ponytail: a status set by hand on the board ("The user may set a status by
- * hand" in the rules) is not built, so `cancelled` has one source, the
- * `rejected` label. Keep the override in `host.storage`, apply it after
- * `featureStatus()` and mark the row as hand-set.
+ * `overrides` holds the statuses the user set by hand, by row id. They come
+ * from the board's own storage, never from the file, and are not trusted: a
+ * value that is no status is ignored.
  */
 export function boardRows(
   features: Feature[],
   tasks: Map<string, TaskFact[]>,
   cache: JiraCache | null,
   sessions: Map<string, SessionFact[]> = new Map(),
+  overrides: Record<string, string> = {},
 ): BoardRow[] {
   const epics = new Map((cache?.epics ?? []).map((e) => [e.key, e]));
   const withFile = new Set<string>();
@@ -225,7 +229,9 @@ export function boardRows(
       sessions: sessions.get(id) ?? [],
       mrs: [],
     };
-    const { status, blocked, stalled } = featureStatus(facts);
+    const { status: computed, blocked, stalled } = featureStatus(facts);
+    const handSet = Object.hasOwn(overrides, id) && Object.hasOwn(STATUS_LABEL, overrides[id]);
+    const status = handSet ? (overrides[id] as FeatureStatus) : computed;
     const { waiting, stuck } = waitItems(facts);
     const explained =
       status === 'cancelled' ||
@@ -233,8 +239,13 @@ export function boardRows(
       hasOpenCard ||
       inProgressInJira ||
       waiting.length > 0;
-    const unknown =
-      feature?.epic && !epic ? 'Jira not read' : mrStateUnknown && !explained ? 'MR state not read' : undefined;
+    const unknown = handSet
+      ? undefined
+      : feature?.epic && !epic
+        ? 'Jira not read'
+        : mrStateUnknown && !explained
+          ? 'MR state not read'
+          : undefined;
     return {
       id,
       title,
@@ -243,6 +254,7 @@ export function boardRows(
       tasks: own,
       progress,
       status,
+      handSet,
       blocked,
       stalled,
       waiting,

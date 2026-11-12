@@ -150,6 +150,20 @@ describe('boardRows', () => {
     expect(withSession([task('in-progress')], 'error')).toMatchObject({ blocked: true, stuck: [{ kind: 'session_error' }] });
   });
 
+  it('lets a status set by hand win over the computed one, and marks it', () => {
+    const rows = (overrides?: Record<string, string>) =>
+      boardRows([feature(), feature({ id: 'ISF-99', epic: 'ISF-99' })], new Map(), cache(epic()), undefined, overrides);
+    expect(rows()[1]).toMatchObject({ id: 'RDHR-144', status: 'in_progress', handSet: false });
+
+    const [missing, reviewed] = rows({ 'RDHR-144': 'awaiting_decision', 'ISF-99': 'cancelled', 'GONE-1': 'done' });
+    expect(reviewed).toMatchObject({ status: 'awaiting_decision', handSet: true });
+    // The user knows better than "unknown" too.
+    expect(missing).toMatchObject({ id: 'ISF-99', status: 'cancelled', handSet: true, unknown: undefined });
+
+    // Storage is not trusted: a value that is no status is ignored.
+    expect(rows({ 'RDHR-144': 'finished' })[1]).toMatchObject({ status: 'in_progress', handSet: false });
+  });
+
   it('gives Tasks whose featureId matches no Feature file or Epic a row of their own', () => {
     const rows = boardRows([], new Map([['mr-1', [task('to-do')]]]), null);
     expect(rows).toHaveLength(1);

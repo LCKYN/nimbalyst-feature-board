@@ -31,6 +31,14 @@ export function FeatureBoard({ host }: PanelHostProps) {
   const [error, setError] = useState<string | null>(null);
   // Opening a file unmounts the panel, so the choice is kept in the workspace's storage, not in state alone.
   const [showClosed, setShowClosed] = useState(() => host.storage.get<boolean>('showClosed') ?? false);
+  // Statuses set by hand, by row id. They live in the board's own storage, never in the Feature file.
+  const [overrides, setOverrides] = useState(() => host.storage.get<Record<string, string>>('statusOverride') ?? {});
+  const setStatus = (id: string, status: string) => {
+    const { [id]: _cleared, ...rest } = overrides;
+    const next = status ? { ...rest, [id]: status } : rest;
+    setOverrides(next);
+    void host.storage.set('statusOverride', next);
+  };
   const [reloads, setReloads] = useState(0);
   const reload = () => setReloads((n) => n + 1);
 
@@ -63,7 +71,7 @@ export function FeatureBoard({ host }: PanelHostProps) {
     return () => window.removeEventListener('focus', reload);
   }, []);
 
-  const rows = loaded && boardRows(loaded.features, loaded.tasks, loaded.jira, loaded.sessions);
+  const rows = loaded && boardRows(loaded.features, loaded.tasks, loaded.jira, loaded.sessions, overrides);
   // The host's own way to show a session (its git panel does the same); it leaves the board.
   const openSession = (sessionId: string) =>
     window.dispatchEvent(
@@ -173,6 +181,7 @@ export function FeatureBoard({ host }: PanelHostProps) {
                     hasJira={Boolean(jira)}
                     hasTasks={hasTasks}
                     onOpen={(path) => host.openFile(path)}
+                    onSetStatus={setStatus}
                   />
                 ))}
               </tbody>
@@ -229,11 +238,14 @@ function FeatureRow({
   hasJira,
   hasTasks,
   onOpen,
+  onSetStatus,
 }: {
   row: BoardRow;
   hasJira: boolean;
   hasTasks: boolean;
   onOpen: (path: string) => void;
+  /** An empty status clears the hand-set one. */
+  onSetStatus: (id: string, status: string) => void;
 }) {
   const { feature, epic, progress } = row;
   const { total, done } = progress;
@@ -297,9 +309,27 @@ function FeatureRow({
               {STATUS_LABEL[row.status]}
             </>
           )}
+          {row.handSet && <span className="feature-row-hand-set text-xs text-nim-muted">✎ hand-set</span>}
           {row.blocked && <span className="text-xs text-nim-error">blocked</span>}
           {row.stalled && <span className="text-xs text-nim-warning">stalled</span>}
         </span>
+        {/* Native <select>: the first option sets nothing, or clears what was set. */}
+        <select
+          className="feature-row-set-status mt-0.5 block cursor-pointer bg-transparent text-xs text-nim-muted"
+          aria-label={`Set the status of ${row.id} by hand`}
+          value={row.handSet ? row.status : ''}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) => onSetStatus(row.id, e.target.value)}
+        >
+          <option className="bg-nim text-nim" value="">
+            {row.handSet ? 'clear · back to computed' : 'set by hand…'}
+          </option>
+          {Object.entries(STATUS_LABEL).map(([status, label]) => (
+            <option key={status} className="bg-nim text-nim" value={status}>
+              {label}
+            </option>
+          ))}
+        </select>
         {row.mrStateUnknown && row.unknown !== 'MR state not read' && (
           <div className="mt-0.5 text-xs text-nim-muted">MR state not read</div>
         )}
